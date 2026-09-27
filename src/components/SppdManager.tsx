@@ -642,16 +642,16 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
           <div className="p-2.5 bg-amber-500/20 border border-amber-500/30 rounded-xl text-amber-400">
             <FileText size={22} />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-black uppercase font-display tracking-wider text-amber-300">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-black uppercase font-display tracking-wider text-amber-300 truncate">
                 Kelola SPPD & Perjalanan Dinas
               </h2>
-              <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">
+              <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold shrink-0">
                 Modul SPPD Head Office
               </span>
             </div>
-            <p className="text-xs text-stone-300 mt-0.5">
+            <p className="text-xs text-stone-300 mt-0.5 line-clamp-2 sm:line-clamp-none">
               Input data SPPD, cetak dokumen resmi ber-kop surat, lalu posting langsung ke Voucher Pengajuan HO.
             </p>
           </div>

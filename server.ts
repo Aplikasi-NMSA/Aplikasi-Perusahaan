@@ -2135,54 +2135,93 @@ const OFFICE_LAT = -6.244342;
 const OFFICE_LON = 106.843073;
 const MAX_DISTANCE_METERS = 150;
 
-// Array of dynamic templates to prevent WhatsApp spam/block detection
-const REMINDER_TEMPLATES = [
-  (name: string, url: string) => `Halo *${name}*! 👋
-
-Sudah masuk jam kerja. Silakan lakukan absen mandiri uang makan harian Anda melalui tautan cepat berikut:
-👉 ${url}
-
-*PENTING:* Absensi ini hanya berlaku bagi karyawan yang hadir fisik di kantor Wisma NH Pasar Minggu. Sistem mendeteksi lokasi GPS Anda secara real-time. Jika Anda sedang di luar kantor atau meeting eksternal, Anda tidak dapat melakukan absen ini. Tetap jaga kesehatan dan selamat beraktivitas! 💼✨`,
-
-  (name: string, url: string) => `Selamat pagi *${name}*! ☀️
-
-Mohon segera catat kehadiran harian Anda untuk kelancaran administrasi uang makan melalui link di bawah:
-👉 ${url}
-
-*Informasi Aturan:* Presensi wajib dilakukan langsung dari area kantor Wisma NH Pasar Minggu. Absen tidak dapat diproses apabila Anda sedang berada di luar kantor atau memiliki agenda meeting di luar. Terima kasih atas disiplin Anda, mari selalu jaga kesehatan diri! 💪🏢`,
-
-  (name: string, url: string) => `Pemberitahuan Presensi Kantor - *${name}* 📍
-
-Yth. Rekan Karyawan, silakan klik tautan di bawah ini untuk mencatat kehadiran harian Anda:
-👉 ${url}
-
-Sistem mendeteksi radius lokasi Anda secara ketat. Harap diingat bahwa absen uang makan ini hanya valid jika dilakukan langsung di dalam Wisma NH Pasar Minggu (tidak berlaku bagi yang sedang dinas luar/meeting luar). Semoga aktivitas hari ini berjalan lancar, tetap jaga kesehatan dan keselamatan kerja! 🛠️💼`,
-
-  (name: string, url: string) => `Halo *${name}*! Salam sukses untuk Anda hari ini. 🏆
-
-Sebelum beraktivitas lebih lanjut, harap klik link instan berikut untuk melakukan absen uang makan hari ini:
-👉 ${url}
-
-*Peringatan Ketentuan:* Absen ini mendeteksi titik koordinat Anda dan hanya dapat diakses dari kantor Wisma NH Pasar Minggu. Bagi yang sedang bertugas atau meeting di luar kantor, absen tidak diperkenankan. Mari jaga kesehatan dan tetap profesional dalam bertugas! 🏁🏢`,
-
-  (name: string, url: string) => `Semangat pagi *${name}*! 🌟
-
-Untuk pencatatan uang makan harian yang akurat, silakan lakukan check-in melalui tautan instan di bawah ini:
-👉 ${url}
-
-*Harap diperhatikan:* Absensi ini dirancang khusus untuk karyawan yang bekerja langsung dari kantor Wisma NH Pasar Minggu. Bagi karyawan yang berada di luar area kantor atau meeting luar, akses absen tidak berlaku. Jaga kondisi tubuh agar selalu prima dan selamat bekerja! 🤝💼`,
-
-  (name: string, url: string) => `Pemberitahuan Kehadiran Wisma NH - *${name}* 🏢
-
-Mari mulai hari kerja ini dengan disiplin. Segera verifikasi kehadiran Anda dengan mengetuk link di bawah:
-👉 ${url}
-
-*Ketentuan Absensi:* Sesuai aturan, absensi uang makan hanya dapat dilakukan secara fisik di area kantor Wisma NH Pasar Minggu. Segala bentuk absensi di luar kantor (termasuk saat meeting luar) tidak akan terverifikasi oleh sistem lokasi. Terima kasih atas pengertiannya, mari utamakan kesehatan dan keselamatan! 📈❤️`
+// High-energy, vibrant Indonesian greetings (24 variations for dynamic per-person & daily diversity)
+const ENERGETIC_GREETINGS = [
+  (name: string) => `Semangat pagi pejuang tangguh *${name}*! ☀️🔥 Awali hari dengan rasa syukur dan tekad meraih prestasi terbaik!`,
+  (name: string) => `Bismillah, salam sukses luar biasa untuk *${name}*! 🚀 Jadikan setiap langkah kerja hari ini penuh berkah dan keberhasilan!`,
+  (name: string) => `Selamat pagi rekan hebat *${name}*! 🌟 Pagi yang cerah, energi baru, siap mengukir karya terbaik hari ini!`,
+  (name: string) => `Semangat membara untuk sahabat pekerja keras *${name}*! 💪✨ Senyummu dan dedikasimu selalu membawa inspirasi positif!`,
+  (name: string) => `Salam penuh optimisme, pejuang andalan *${name}*! ☕🌈 Hari ini adalah kesempatan emas untuk membuktikan potensi terbaikmu!`,
+  (name: string) => `Halo sang juara *${name}*! 🏆 Mari sambut pagi ini dengan senyuman hangat dan semangat yang menyala-nyala!`,
+  (name: string) => `Selamat pagi pahlawan operasional *${name}*! 🏢⚡ Semoga setiap ikhtiar dan keringatmu berbuah hasil yang membanggakan!`,
+  (name: string) => `Pagi penuh berkah untuk saudaraku *${name}*! 🌺 Awali hari dengan niat lurus, energi positif, dan fokus pada target gemilang!`,
+  (name: string) => `Semangat pagi tanpa batas untuk *${name}*! 🎯 Kesuksesan besar selalu berawal dari disiplin dan langkah mantap setiap pagi!`,
+  (name: string) => `Salam semangat membahana, rekan tangguh *${name}*! 💎 Jangan ragu, hari ini pintu-pintu rezeki dan peluang terbuka lebar!`,
+  (name: string) => `Selamat pagi insan berdedikasi tinggi *${name}*! 👔🌟 Bersama kita kuat, mari kita tuntaskan tugas kerja dengan penuh integritas!`,
+  (name: string) => `Halo bintang lapangan andalan *${name}*! 🌠 Kerja cerdas, kerja ikhlas, dan keberkahan selalu menyertai setiap langkahmu!`,
+  (name: string) => `Selamat pagi sahabat terbaik *${name}*! 🌤️ Mantapkan niat, jaga kesehatan, dan mari kita torehkan prestasi terbaik hari ini!`,
+  (name: string) => `Semangat pagi pejuang rezeki halal *${name}*! 🤲💖 Setiap tetes peluh perjuanganmu bernilai pahala dan kehormatan tinggi!`,
+  (name: string) => `Salam hangat dan penuh energi positif untuk *${name}*! ⚡ Mari melangkah mantap, hari ini akan menjadi hari yang luar biasa produktif!`,
+  (name: string) => `Selamat pagi mitra kerja terpercaya *${name}*! 🤝✨ Semangat baru, harapan baru, mari taklukkan tantangan hari ini bersama-sama!`,
+  (name: string) => `Pagi cerah penuh harapan untuk rekan andalan *${name}*! 🌻 Jadikan hari ini lebih baik dari kemarin dengan dedikasi terbaikmu!`,
+  (name: string) => `Semangat pagi pejuang PT NMSA *${name}*! 🏗️🔥 Teruslah melangkah dengan bangga, kontribusimu sangat berarti bagi kemajuan bersama!`,
+  (name: string) => `Salam keberkahan pagi untuk *${name}*! 🌿 Semoga kelancaran, keselamatan, dan kebahagiaan menyertai seluruh aktivitasmu hari ini!`,
+  (name: string) => `Halo rekan tangguh berhati mulia *${name}*! 🥇 Pagi yang indah untuk memulai langkah dengan penuh percaya diri dan senyuman!`,
+  (name: string) => `Semangat pagi tiada tara untuk *${name}*! 🚀 Mari awali hari dengan komitmen tinggi dan semangat saling mendukung!`,
+  (name: string) => `Selamat pagi pejuang masa depan cerah *${name}*! ☀️🛡️ Selalu utamakan keselamatan kerja dan selesaikan tugas dengan rasa bangga!`,
+  (name: string) => `Salam sukses penuh inspirasi untuk rekan hebat *${name}*! 💼🌟 Hari ini adalah lembaran baru untuk mengukir cerita sukses!`,
+  (name: string) => `Semangat pagi membakar jiwa untuk *${name}*! ⚡ Mari kita jadikan hari ini penuh makna, prestasi, dan rezeki yang melimpah ruah!`
 ];
 
-function getRandomReminderMessage(name: string, url: string): string {
-  const randomIndex = Math.floor(Math.random() * REMINDER_TEMPLATES.length);
-  return REMINDER_TEMPLATES[randomIndex](name, url);
+// Diverse, energetic Calls-to-Action (12 variations)
+const ENERGETIC_CALL_TO_ACTIONS = [
+  "Yuk amankan pencatatan uang makan harianmu sekarang juga! Cukup klik tautan cepat berikut:",
+  "Satu sentuhan link di bawah ini adalah tanda kehadiran dan bukti disiplin hebatmu hari ini:",
+  "Jangan tunda lagi ya, luangkan waktu 5 detik untuk konfirmasi kehadiran melalui tautan kilat ini:",
+  "Segera catat presensi mandirimu agar uang makan tercatat sempurna di sistem keuangan, klik di sini ya:",
+  "Mari awali jam kerja dengan presensi! Langsung ketuk tautan absen instan di bawah ini:",
+  "Agar hak uang makan harianmu aman dan terdata rapi oleh bagian admin, yuk klik link ini:",
+  "Cukup satu klik mudah untuk verifikasi absensi mandirimu hari ini, silakan akses link berikut:",
+  "Yuk check-in sekarang juga sebelum batas waktu absensi ditutup, langsung sentuh link resmi di bawah:",
+  "Demi kelancaran rekapitulasi harian dan uang makanmu, silakan konfirmasi kehadiran via tautan cepat ini:",
+  "Jangan sampai terlewat ya rekan hebat, verifikasi kehadiran fisikmu dengan mengetuk tautan berikut:",
+  "Amankan presensi kehadiranmu pagi ini dengan sangat mudah, silakan klik link instan di bawah:",
+  "Satu klik untuk mengawali hari kerja yang tertib dan profesional, yuk klik tautan berikut:"
+];
+
+// Warm, motivating closing blessings (8 variations)
+const ENERGETIC_CLOSINGS = [
+  "Selamat bertugas, jaga kesehatan, dan utamakan selalu keselamatan kerja! Semangat luar biasa! 💼✨🛡️",
+  "Semoga hari ini penuh berkah, urusan dipermudah, dan rezeki mengalir lancar! Aamiin. 🤲🌟",
+  "Tetap fokus, jaga kekompakan tim, dan mari kita capai hasil terbaik hari ini! Sukses selalu! 🏆💪",
+  "Jaga stamina tubuh dan selalu tersenyum sepanjang hari. Selamat berkarya rekan hebat! 😄🏢",
+  "Doa kami menyertai langkah kerjamu hari ini. Semoga senantiasa aman, sehat, dan penuh berkah! 🌿🤝",
+  "Bekerjalah dengan hati gembira dan penuh integritas. Hari ini pasti hari yang menyenangkan! 🌤️❤️",
+  "Utamakan kesehatan dan keselamatan di lingkungan kerja. Selamat beraktivitas dan salam sukses! 🛡️⚡",
+  "Keluarga menanti di rumah dengan bangga. Selamat bekerja dengan aman dan penuh semangat! 👨‍👩‍👧‍👦✨"
+];
+
+// Generates energetic, unique message per employee AND per day (over 2,300+ combinations)
+function getEnergeticDailyReminderMessage(name: string, workerId: string, url: string, dateStr?: string): string {
+  const dStr = dateStr || getJakartaDateStr();
+  const seedStr = `${workerId || name}_${name}_${dStr}`;
+  let hash = 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    hash = (hash << 5) - hash + seedStr.charCodeAt(i);
+    hash |= 0;
+  }
+  const absHash = Math.abs(hash);
+
+  const greetingIndex = absHash % ENERGETIC_GREETINGS.length;
+  const ctaIndex = Math.floor(absHash / ENERGETIC_GREETINGS.length) % ENERGETIC_CALL_TO_ACTIONS.length;
+  const closingIndex = (absHash + 7) % ENERGETIC_CLOSINGS.length;
+
+  const greeting = ENERGETIC_GREETINGS[greetingIndex](name);
+  const cta = ENERGETIC_CALL_TO_ACTIONS[ctaIndex];
+  const closing = ENERGETIC_CLOSINGS[closingIndex];
+
+  return `${greeting}
+
+${cta}
+👉 ${url}
+
+📍 *Ketentuan Presensi:* Absensi uang makan ini mendeteksi titik koordinat GPS secara otomatis dan hanya sah dilakukan langsung di area kantor Wisma NH Pasar Minggu. Jika sedang dinas luar atau meeting eksternal, presensi mandiri tidak berlaku.
+
+${closing}`;
+}
+
+function getRandomReminderMessage(name: string, url: string, workerId?: string, dateStr?: string): string {
+  return getEnergeticDailyReminderMessage(name, workerId || name, url, dateStr);
 }
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -3669,8 +3708,8 @@ app.get("/api/cron-reminder", async (req, res) => {
       // Generate instant check-in URL with quick=true
       const loginUrl = `${hostOrigin}/?id=${worker.id}&quick=true`;
       
-      // Select a random anti-spam message template
-      const message = getRandomReminderMessage(worker.name, loginUrl);
+      // Select an energetic, highly varied personalized message template
+      const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
 
       const result = await sendWhatsAppMessage(worker.phoneNumber, message);
       if (result.success) {

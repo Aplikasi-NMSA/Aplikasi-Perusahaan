@@ -63,7 +63,7 @@ import {
   switchUserCompany,
   setActiveCompanyId
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2 } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -2470,7 +2470,7 @@ export default function App() {
                     <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
                       {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                     </div>
-                    <div className="flex flex-col items-start text-left">
+                    <div className="hidden sm:flex flex-col items-start text-left">
                       <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
                         <span className="truncate max-w-[120px] sm:max-w-[160px]">
                           {userProfile?.fullName || 'Nur Wahyudi'}
@@ -2650,16 +2650,16 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between min-h-18 py-2 md:py-0">
             {/* Logo area */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('list')}>
-                <div className="p-2.5 bg-stone-100 rounded-xl text-stone-850">
-                  <Database size={20} className="text-gold-dynamic" />
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0" onClick={() => setView('list')}>
+                <div className="p-2 sm:p-2.5 bg-stone-100 rounded-xl text-stone-850 shrink-0">
+                  <Database size={18} className="text-gold-dynamic sm:w-5 sm:h-5" />
                 </div>
-                <div className="space-y-0.5">
-                  <span className="font-mono text-xs uppercase tracking-wider text-stone-400 font-bold block">
+                <div className="space-y-0.5 min-w-0">
+                  <span className="font-mono text-[10px] sm:text-xs uppercase tracking-wider text-stone-400 font-bold block truncate max-w-[100px] sm:max-w-none">
                     {userProfile?.companyDetails?.displayName || 'Internal HO System'}
                   </span>
-                  <h1 className="text-xs sm:text-sm font-black text-stone-900 tracking-tight flex items-center gap-1.5 font-sans">
+                  <h1 className="text-xs sm:text-sm font-black text-stone-900 tracking-tight flex items-center gap-1.5 font-sans truncate max-w-[120px] sm:max-w-none">
                     {userProfile?.companyName ? `${userProfile.companyName} Portal` : 'Nusantara Mineral Payment Portal'}
                   </h1>
                 </div>
@@ -3039,13 +3039,13 @@ export default function App() {
               <div className="relative" ref={userMenuRef}>
                 <button
                   onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
+                  className="flex items-center gap-1.5 sm:gap-2 py-1.5 px-2 sm:px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50 shrink-0"
                   title="Klik untuk menu profil, ganti tema, & logout"
                 >
-                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
+                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs shrink-0">
                     {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                   </div>
-                  <div className="flex flex-col items-start text-left">
+                  <div className="hidden sm:flex flex-col items-start text-left">
                     <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
                       <span className="truncate max-w-[120px] sm:max-w-[160px]">
                         {userProfile?.fullName || 'Nur Wahyudi'}
@@ -3056,6 +3056,7 @@ export default function App() {
                       {userProfile?.role || 'Divisi Keuangan'}
                     </span>
                   </div>
+                  <ChevronDown size={13} className={`sm:hidden text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {/* User Dropdown Popover */}
@@ -3228,6 +3229,161 @@ export default function App() {
       </div>
     </header>
 
+    {/* PRIMARY APPLICATION NAVIGATION BAR - RESPONSIVE FOR LAPTOP & ANDROID */}
+    <nav className="bg-stone-100/95 backdrop-blur-md border-b border-stone-250 sticky top-[57px] sm:top-[65px] z-30 shadow-3xs print:hidden">
+      <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-1 py-1.5 overflow-x-auto no-scrollbar scroll-smooth">
+          <div className="flex items-center gap-1 shrink-0">
+            {/* 1. Voucher HO */}
+            <button
+              type="button"
+              onClick={() => setView('list')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'list'
+                  ? 'bg-stone-900 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Database size={13} className={view === 'list' ? 'text-amber-400' : 'text-amber-600'} />
+              <span>Voucher HO</span>
+            </button>
+
+            {/* 2. Absen Harian */}
+            <button
+              type="button"
+              onClick={() => setView('absen')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'absen'
+                  ? 'bg-emerald-800 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Users size={13} className={view === 'absen' ? 'text-emerald-300' : 'text-emerald-600'} />
+              <span>Absensi Harian</span>
+            </button>
+
+            {/* 3. Pemetaan Akun */}
+            <button
+              type="button"
+              onClick={() => setView('accurate')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'accurate'
+                  ? 'bg-emerald-800 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Layers size={13} className={view === 'accurate' ? 'text-emerald-300' : 'text-emerald-700'} />
+              <span>Pemetaan Akun</span>
+            </button>
+
+            {/* 4. Master NPWP & Vendor */}
+            <button
+              type="button"
+              onClick={() => setView('npwp')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'npwp'
+                  ? 'bg-indigo-900 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Receipt size={13} className={view === 'npwp' ? 'text-indigo-300' : 'text-indigo-600'} />
+              <span>Master NPWP</span>
+            </button>
+
+            {/* 5. SPPD Dinas */}
+            <button
+              type="button"
+              onClick={() => setView('sppd')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'sppd'
+                  ? 'bg-amber-600 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Briefcase size={13} className={view === 'sppd' ? 'text-amber-200' : 'text-amber-600'} />
+              <span>SPPD Dinas</span>
+            </button>
+
+            {/* 6. Agenda & Pengingat */}
+            <button
+              type="button"
+              onClick={() => setView('agenda')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'agenda'
+                  ? 'bg-amber-600 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Calendar size={13} className={view === 'agenda' ? 'text-amber-200' : 'text-amber-600'} />
+              <span>Agenda</span>
+              {agendaDueCount > 0 && (
+                <span className="text-[9px] font-mono bg-rose-600 text-white px-1.5 py-0.2 rounded-full font-bold">
+                  {agendaDueCount}
+                </span>
+              )}
+            </button>
+
+            {/* 7. RAB Proyek */}
+            <button
+              type="button"
+              onClick={() => setView('rab')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'rab'
+                  ? 'bg-emerald-800 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Building2 size={13} className={view === 'rab' ? 'text-emerald-300' : 'text-emerald-600'} />
+              <span>RAB Proyek</span>
+            </button>
+
+            {/* 8. PPh 23 Coretax */}
+            <button
+              type="button"
+              onClick={() => setView('pph23')}
+              className={`hidden md:inline-flex px-3 py-1.5 rounded-xl text-xs font-bold transition items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'pph23'
+                  ? 'bg-amber-600 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <Receipt size={13} className={view === 'pph23' ? 'text-amber-200' : 'text-amber-600'} />
+              <span>PPh 23</span>
+            </button>
+
+            {/* 9. Buku Besar */}
+            <button
+              type="button"
+              onClick={() => setView('ledger')}
+              className={`hidden md:inline-flex px-3 py-1.5 rounded-xl text-xs font-bold transition items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                view === 'ledger'
+                  ? 'bg-amber-600 text-white shadow-xs font-black'
+                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
+              }`}
+            >
+              <BookOpen size={13} className={view === 'ledger' ? 'text-amber-200' : 'text-amber-600'} />
+              <span>Buku Besar</span>
+            </button>
+          </div>
+
+          {/* Quick Action: New Voucher */}
+          <div className="shrink-0 pl-2">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingSubmission(null);
+                setView('form');
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gold-dynamic hover:bg-gold-dynamic-hover text-stone-900 font-extrabold rounded-xl text-xs transition shadow-3xs cursor-pointer whitespace-nowrap"
+            >
+              <Plus size={13} />
+              <span className="hidden sm:inline">Input Baru</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </nav>
+
     {/* PERSISTENT REMINDER BANNER FOR DUE / OVERDUE AGENDA ITEMS */}
     <AgendaReminderBanner
       agendaItems={agendaItems}
@@ -3237,7 +3393,7 @@ export default function App() {
     />
 
       {/* MAIN CONTAINER */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
         
         {/* VIEW 1: Submissions Data History & Backup Operations */}
         <div className={view === 'list' ? 'space-y-6' : 'hidden'}>
