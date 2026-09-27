@@ -1,0 +1,7 @@
+# Running this project on Replit
+
+- This is the imported React/Vite frontend with an Express server. Install dependencies with `npm ci`.
+- Use the **Start application** workflow (command: `PORT=5000 npm run dev`) to run the app in the Replit web preview. For a local shell, run `PORT=5000 npm run dev`.
+- `npm run build` produces the production bundle; `npm run start` serves it after building.
+- Configure optional credentials through Replit Secrets rather than committing `.env` files. See `.env.example` for the environment variable names. `GEMINI_API_KEY` is required for AI endpoints; Google service account variables are needed for related Google features.
+- The frontend reads `VITE_FIREBASE_*` settings when provided, but otherwise falls back to a Firebase project configuration already embedded in the imported source. Treat that project as potentially live: do not modify its data unless you intend to.
