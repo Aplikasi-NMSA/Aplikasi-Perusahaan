@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@e965/xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { 
