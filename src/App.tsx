@@ -2646,11 +2646,11 @@ export default function App() {
     <div id="app-root" className={`min-h-screen bg-stone-50 text-stone-850 flex flex-col antialiased theme-${theme}`}>
       
       {/* GLOBAL HEADER HEADER - Hidden on print */}
-      <header className="bg-white border-b border-stone-200 sticky top-0 z-40 shadow-xs print:hidden">
+      <header className="app-global-header bg-white border-b border-stone-200 fixed inset-x-0 top-0 z-[100] shadow-xs print:hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between min-h-18 py-2 md:py-0">
             {/* Logo area */}
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="hidden sm:flex items-center gap-2 sm:gap-3 min-w-0">
               <div className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0" onClick={() => setView('list')}>
                 <div className="p-2 sm:p-2.5 bg-stone-100 rounded-xl text-stone-850 shrink-0">
                   <Database size={18} className="text-gold-dynamic sm:w-5 sm:h-5" />
@@ -2686,7 +2686,7 @@ export default function App() {
             {/* HEADER RIGHT ACTIONS: CLEAN, COMPACT & PROFESSIONAL */}
             <div className="flex items-center gap-2 sm:gap-2.5">
               {/* Real-time System Clock (WIB) */}
-              <LiveClock variant="badge" className="hidden xl:inline-flex" />
+              <LiveClock variant="badge" className="inline-flex min-w-0 max-w-[160px] sm:max-w-[220px]" />
 
               {/* Compact Agenda / Notif Button with Red Badge */}
               <button
@@ -2728,7 +2728,7 @@ export default function App() {
 
                 {/* Dropdown Popover */}
                 {isToolsDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-88 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2 max-h-[85vh] overflow-y-auto">
+                    <div className="app-header-dropdown fixed right-2 top-[calc(var(--app-header-height)+0.5rem)] w-[min(22rem,calc(100vw-1rem))] bg-white rounded-2xl shadow-xl border border-stone-200 z-[120] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
                     <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
                         Layanan &amp; Integrasi Cloud
@@ -3061,7 +3061,7 @@ export default function App() {
 
                 {/* User Dropdown Popover */}
                 {isUserMenuOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
+                  <div className="app-header-dropdown fixed right-2 top-[calc(var(--app-header-height)+0.5rem)] w-[min(18rem,calc(100vw-1rem))] bg-white rounded-2xl shadow-xl border border-stone-200 z-[120] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans">
                     <div className="p-3.5 bg-stone-50 border-b border-stone-200">
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
@@ -3230,7 +3230,10 @@ export default function App() {
     </header>
 
     {/* PRIMARY APPLICATION NAVIGATION BAR - RESPONSIVE FOR LAPTOP & ANDROID */}
-    <nav className="bg-stone-100/95 backdrop-blur-md border-b border-stone-250 sticky top-[57px] sm:top-[65px] z-30 shadow-3xs print:hidden">
+    <div className="h-[76px] sm:h-[80px] shrink-0 print:hidden" aria-hidden="true" />
+
+    {/* Legacy horizontal navigation is intentionally hidden; all modules remain in the gear menu. */}
+    <nav className="hidden" aria-hidden="true">
       <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-1 py-1.5 overflow-x-auto no-scrollbar scroll-smooth">
           <div className="flex items-center gap-1 shrink-0">
