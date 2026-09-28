@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense } from './types';
+import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense, InternalMemo } from './types';
 import { INITIAL_SUBMISSIONS } from './data/initialData';
 import { INITIAL_AGENDA_ITEMS } from './data/initialAgenda';
 import { SubmissionsList } from './components/SubmissionsList';
@@ -2186,6 +2186,46 @@ export default function App() {
     setView('form');
   };
 
+  // Handler to create a new Voucher HO draft directly from an Internal Memo
+  const handleCreateVoucherFromMemo = (memo: InternalMemo) => {
+    const docKode = `VCR-${Date.now().toString().slice(-6)}`;
+    const amount = Number(memo.linkedAmount) || 0;
+    const recipient = memo.accountHolder || memo.kepada?.split('–')[0]?.split('-')[0]?.trim() || 'Pihak Terkait';
+
+    const newMemoSubmission: Submission = {
+      id: 'sub-memo-' + Date.now(),
+      tanggal: memo.tanggal || new Date().toISOString().split('T')[0],
+      jenisPengajuan: 'Operasional Direksi',
+      kode: docKode,
+      dibayarkanKepada: recipient,
+      dibayarkanDengan: 'Cek/Transfer',
+      status: 'Belum Lunas',
+      notes: `Ref Internal Memo No. ${memo.nomorMemo}: ${memo.perihal || ''}`,
+      noRekeningTujuan: memo.accountNumber || '',
+      namaBankTujuan: memo.bankName || 'Bank Mandiri',
+      atasNamaRekeningTujuan: memo.accountHolder || recipient,
+      dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
+      disetujuiOleh: memo.penandatanganNama2 || 'Harijon',
+      disetujuiJabatan: memo.penandatanganJabatan2 || 'Direktur Keuangan',
+      disetujuiOleh2: memo.penandatanganNama3 || 'Abdul Aziz Halid',
+      disetujuiJabatan2: memo.penandatanganJabatan3 || 'Direktur Utama ANH',
+      items: [
+        {
+          id: 'item_memo_' + Date.now(),
+          no: 1,
+          item: memo.perihal || 'Pengeluaran sesuai Internal Memo',
+          jumlahVolume: '1 Paket',
+          total: amount,
+          keterangan: `Internal Memo No. ${memo.nomorMemo}`
+        }
+      ],
+      createdAt: new Date().toISOString()
+    };
+
+    setEditingSubmission(newMemoSubmission);
+    setView('form');
+  };
+
   // 1. Check Public Share View Route before anything else (Highest Priority for Public Links)
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const rawIdParam = (searchParams.get('id') || '').toLowerCase().trim();
@@ -2651,7 +2691,7 @@ export default function App() {
     <div id="app-root" className={`min-h-screen bg-stone-50 text-stone-850 flex flex-col antialiased theme-${theme}`}>
       
       {/* GLOBAL HEADER - Sticky at the top on scroll */}
-      <header className="app-global-header bg-white border-b border-stone-200 sticky top-0 z-50 shadow-xs print:hidden">
+      <header className="app-global-header bg-white border-b border-stone-200 sticky top-0 z-[1000] shadow-xs print:hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between min-h-18 py-2 md:py-0">
             {/* Logo area */}
@@ -2733,7 +2773,7 @@ export default function App() {
 
                 {/* Dropdown Popover */}
                 {isToolsDropdownOpen && (
-                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[120] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
+                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
                     <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
                         Layanan &amp; Integrasi Cloud
@@ -3066,7 +3106,7 @@ export default function App() {
 
                 {/* User Dropdown Popover */}
                 {isUserMenuOpen && (
-                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(18rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[120] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans">
+                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(18rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans">
                     <div className="p-3.5 bg-stone-50 border-b border-stone-200">
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
@@ -3551,6 +3591,7 @@ export default function App() {
             initialSubmissionForMemo={memoSubmissionTarget}
             onBackToList={() => setView('list')}
             userProfile={userProfile}
+            onCreateVoucher={handleCreateVoucherFromMemo}
           />
         )}
 

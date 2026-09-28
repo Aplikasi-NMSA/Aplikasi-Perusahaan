@@ -8,6 +8,7 @@ interface InternalMemoDocumentProps {
   customLogoUrl?: string;
   customHeaderUrl?: string;
   className?: string;
+  id?: string;
 }
 
 // Cleanly format and sanitize rich text HTML from Word editor or plain text legacy memos
@@ -36,6 +37,7 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
   customLogoUrl,
   customHeaderUrl,
   className = '',
+  id = 'internal-memo-printable-document',
 }) => {
   // Check whether to use image banner or official vector layout (matching user's Word layout)
   const isImageHeader = memo.useImageHeader === true;
@@ -63,7 +65,7 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
 
   return (
     <div
-      id="internal-memo-printable-document"
+      id={id}
       className={`bg-white text-black shadow-md border border-stone-200 mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] flex flex-col justify-between select-text internal-memo-page memo-word-document ${className}`}
       style={{
         boxSizing: 'border-box',

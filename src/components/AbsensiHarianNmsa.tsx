@@ -5553,8 +5553,8 @@ export function AbsensiHarianNmsa({
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-indigo-500 selection:text-white" id="main_container">
       
-      {/* HEADER NAVBAR - CLEAN TOOLBAR */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs" id="nav_header">
+      {/* HEADER TOOLBAR - CLEAN TOOLBAR */}
+      <div className="bg-white border-b border-slate-200 relative z-10 shadow-2xs" id="nav_header">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           
           <div className="flex items-center gap-3">
@@ -5613,7 +5613,7 @@ export function AbsensiHarianNmsa({
             </div>
           </div>
         </div>
-      </header>
+      </div>
 
       {/* WORKSPACE AREA */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full" id="workspace_main">

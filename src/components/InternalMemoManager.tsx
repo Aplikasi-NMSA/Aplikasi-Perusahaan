@@ -23,6 +23,8 @@ import {
 import { InternalMemoDocument } from './InternalMemoDocument';
 import { ManageBankAccountsModal } from './ManageBankAccountsModal';
 import { MemoRichEditor } from './MemoRichEditor';
+import { ScanUploadSignedMemoModal } from './ScanUploadSignedMemoModal';
+import { SignedMemoViewerModal } from './SignedMemoViewerModal';
 import {
   FileText,
   Printer,
@@ -53,6 +55,9 @@ import {
   CloudUpload,
   ExternalLink,
   Loader2,
+  Camera,
+  FileCheck,
+  Eye,
 } from 'lucide-react';
 
 const COMMON_MEMO_SIGNERS = [
@@ -68,6 +73,7 @@ interface InternalMemoManagerProps {
   initialSubmissionForMemo?: Submission | null;
   onBackToList: () => void;
   userProfile?: any;
+  onCreateVoucher?: (memo: InternalMemo) => void;
 }
 
 export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
@@ -75,6 +81,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   initialSubmissionForMemo = null,
   onBackToList,
   userProfile,
+  onCreateVoucher,
 }) => {
   const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'banks'>('editor');
   const [memos, setMemos] = useState<InternalMemo[]>(() => getSavedInternalMemos());
@@ -95,6 +102,11 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   const [driveSuccessMsg, setDriveSuccessMsg] = useState('');
   const [driveErrorMsg, setDriveErrorMsg] = useState('');
   const [hiddenMemoForDrive, setHiddenMemoForDrive] = useState<InternalMemo | null>(null);
+
+  // Scan & Signed Document Modal states
+  const [isScanModalOpen, setIsScanModalOpen] = useState(false);
+  const [isViewerModalOpen, setIsViewerModalOpen] = useState(false);
+  const [targetMemoForScan, setTargetMemoForScan] = useState<InternalMemo | null>(null);
 
   // Active memo being edited - automatically sequential
   const [currentMemo, setCurrentMemo] = useState<InternalMemo>(() => {
@@ -169,12 +181,22 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     return () => { isMounted = false; };
   }, []);
 
-  // If initialSubmissionForMemo changes, update currentMemo with sequential number
+  // If initialSubmissionForMemo changes, update currentMemo with sequential number & save to Riwayat
   useEffect(() => {
     if (initialSubmissionForMemo) {
       const newMemo = createInitialMemo(initialSubmissionForMemo, memos);
       setCurrentMemo(newMemo);
+      const updated = [newMemo, ...memos.filter(m => m.id !== newMemo.id)];
+      persistMemos(updated);
+      saveInternalMemoToFirestore(newMemo).catch(() => {});
+      fetch('/api/internal-memos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memo: newMemo }),
+      }).catch(() => {});
       setActiveTab('editor');
+      setSaveSuccessMsg(`Memo baru dari Voucher ${initialSubmissionForMemo.kode} siap diedit dan tersimpan di Riwayat.`);
+      setTimeout(() => setSaveSuccessMsg(''), 3500);
     }
   }, [initialSubmissionForMemo]);
 
@@ -395,9 +417,17 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   const handleCreateNewMemo = () => {
     const fresh = createInitialMemo(null, memos);
     setCurrentMemo(fresh);
+    const updated = [fresh, ...memos.filter(m => m.id !== fresh.id)];
+    persistMemos(updated);
+    saveInternalMemoToFirestore(fresh).catch(() => {});
+    fetch('/api/internal-memos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo: fresh }),
+    }).catch(() => {});
     setActiveTab('editor');
-    setSaveSuccessMsg(`Draf memo baru dengan Nomor ${fresh.nomorMemo} siap diedit.`);
-    setTimeout(() => setSaveSuccessMsg(''), 3000);
+    setSaveSuccessMsg(`Draf memo baru dengan Nomor ${fresh.nomorMemo} dibuat & tersimpan di Riwayat.`);
+    setTimeout(() => setSaveSuccessMsg(''), 3500);
   };
 
   // Duplicate current memo with next accumulated sequence
@@ -442,6 +472,126 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         }
       }
     }
+  };
+
+  // Open scan modal for either current memo or a specific history memo
+  const handleOpenScanModal = (memoToScan: InternalMemo = currentMemo) => {
+    setTargetMemoForScan(memoToScan);
+    setIsScanModalOpen(true);
+  };
+
+  // Open viewer modal for a signed memo
+  const handleOpenViewerModal = (memoToView: InternalMemo = currentMemo) => {
+    setTargetMemoForScan(memoToView);
+    setIsViewerModalOpen(true);
+  };
+
+  // Delete signed document from a memo
+  const handleDeleteSignedDocument = async (memoId: string) => {
+    const updated = memos.map((m) => {
+      if (m.id === memoId) {
+        return {
+          ...m,
+          signedDocumentUrl: undefined,
+          signedDocumentName: undefined,
+          signedDocumentType: undefined,
+          signedDocumentSize: undefined,
+          signedAt: undefined,
+          signedDriveUrl: undefined,
+          signedDriveFileId: undefined,
+          signedDriveFolderPath: undefined,
+          signedNotes: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return m;
+    });
+
+    persistMemos(updated);
+    const target = updated.find((m) => m.id === memoId);
+    if (target) {
+      if (currentMemo.id === memoId) {
+        setCurrentMemo(target);
+      }
+      saveInternalMemoToFirestore(target).catch(() => {});
+      fetch('/api/internal-memos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memo: target }),
+      }).catch(() => {});
+    }
+    setSaveSuccessMsg('Berkas scan bertanda tangan dihapus dari memo.');
+    setTimeout(() => setSaveSuccessMsg(''), 3000);
+  };
+
+  // Save signed document and upload to Google Drive
+  const handleSaveSignedDocument = async (
+    updatedFields: Partial<InternalMemo>,
+    fileBlob: Blob,
+    fileName: string
+  ): Promise<boolean> => {
+    const activeMemo = targetMemoForScan || currentMemo;
+    let payload: InternalMemo = {
+      ...activeMemo,
+      ...updatedFields,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // 1. Immediately save locally & Firestore
+    const updated = memos.map((m) => (m.id === payload.id ? payload : m));
+    if (!memos.some((m) => m.id === payload.id)) {
+      updated.unshift(payload);
+    }
+    persistMemos(updated);
+    if (currentMemo.id === payload.id) {
+      setCurrentMemo(payload);
+    }
+    saveInternalMemoToFirestore(payload).catch(() => {});
+    fetch('/api/internal-memos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo: payload }),
+    }).catch(() => {});
+
+    setSaveSuccessMsg(`Berkas scan bertanda tangan berhasil disimpan untuk Memo ${payload.nomorMemo}!`);
+    setTimeout(() => setSaveSuccessMsg(''), 4000);
+
+    // 2. Upload signed document to Google Drive
+    try {
+      setDriveSuccessMsg('Mengunggah berkas scan bertanda tangan ke Google Drive...');
+      const driveRes = await memoGoogleDriveService.uploadSignedDocument(payload, fileBlob, fileName);
+      if (driveRes.success && driveRes.url) {
+        payload = {
+          ...payload,
+          signedDriveUrl: driveRes.url,
+          signedDriveFileId: driveRes.fileId,
+          signedDriveFolderPath: driveRes.folderPath,
+        };
+        const reUpdated = updated.map((m) => (m.id === payload.id ? payload : m));
+        persistMemos(reUpdated);
+        if (currentMemo.id === payload.id) {
+          setCurrentMemo(payload);
+        }
+        saveInternalMemoToFirestore(payload).catch(() => {});
+        fetch('/api/internal-memos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memo: payload }),
+        }).catch(() => {});
+
+        setDriveSuccessMsg(`✓ Berkas scan bertanda tangan berhasil dicadangkan ke Google Drive: ${driveRes.folderPath}`);
+        setTimeout(() => setDriveSuccessMsg(''), 7000);
+      } else if (driveRes.error) {
+        setDriveErrorMsg(`Google Drive: ${driveRes.error}`);
+        setTimeout(() => setDriveErrorMsg(''), 6000);
+      }
+    } catch (err: any) {
+      console.warn('Signed drive upload error:', err);
+      setDriveErrorMsg(`Gagal upload scan ke Drive: ${err.message}`);
+      setTimeout(() => setDriveErrorMsg(''), 6000);
+    }
+
+    return true;
   };
 
   // Select a memo from history to edit
@@ -573,9 +723,9 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   };
 
   // Print function with complete isolation to match Microsoft Word exact output
-  const handlePrint = () => {
-    // Automatically save before print
-    handleSaveCurrentMemo();
+  const handlePrint = async () => {
+    // Automatically save and backup to Google Drive before print
+    await handleSaveCurrentMemo({ forceUploadDrive: true });
     document.body.classList.add('is-printing-internal-memo');
 
     const cleanup = () => {
@@ -589,7 +739,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       window.print();
       // Fallback timeout cleanup in case afterprint doesn't trigger on some browsers
       setTimeout(cleanup, 2500);
-    }, 150);
+    }, 200);
   };
 
   // Filter memos for history tab
@@ -669,10 +819,33 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
             </button>
           </div>
 
+          {/* Tombol Scan & Upload Berkas TTD */}
+          {currentMemo.signedDocumentUrl ? (
+            <button
+              type="button"
+              onClick={() => handleOpenViewerModal(currentMemo)}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition shadow-3xs flex items-center gap-1.5 cursor-pointer"
+              title="Lihat berkas fisik yang sudah ditandatangani basah"
+            >
+              <FileCheck size={15} />
+              <span>Lihat Scan TTD</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleOpenScanModal(currentMemo)}
+              className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-black rounded-xl transition shadow-3xs flex items-center gap-1.5 cursor-pointer"
+              title="Scan dari printer kantor atau upload foto memo yang telah ditandatangani basah"
+            >
+              <Camera size={15} />
+              <span>Scan / Upload TTD</span>
+            </button>
+          )}
+
           <button
             onClick={handlePrint}
             className="px-3.5 py-2 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition shadow-sm flex items-center gap-1.5 cursor-pointer"
-            title="Cetak A4 atau Simpan sebagai PDF"
+            title="Cetak A4 ke Printer Fisik atau Simpan sebagai PDF"
           >
             <Printer size={15} />
             <span>Cetak / PDF</span>
@@ -685,6 +858,31 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs animate-in fade-in duration-200 print:hidden">
           <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
           <span>{saveSuccessMsg}</span>
+        </div>
+      )}
+      {driveSuccessMsg && (
+        <div className="bg-emerald-50 border border-emerald-300 text-emerald-950 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between gap-2 shadow-xs animate-in fade-in duration-200 print:hidden">
+          <div className="flex items-center gap-2">
+            <CloudUpload size={16} className="text-emerald-600 shrink-0" />
+            <span>{driveSuccessMsg}</span>
+          </div>
+          {currentMemo.driveUrl && (
+            <a
+              href={currentMemo.driveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 underline hover:text-emerald-950 shrink-0"
+            >
+              <span>Buka di Drive</span>
+              <ExternalLink size={12} />
+            </a>
+          )}
+        </div>
+      )}
+      {driveErrorMsg && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-950 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs animate-in fade-in duration-200 print:hidden">
+          <AlertCircle size={16} className="text-amber-700 shrink-0" />
+          <span>{driveErrorMsg}</span>
         </div>
       )}
 
@@ -717,6 +915,66 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* STATUS & SCAN TANDA TANGAN BASAH CARD */}
+            {currentMemo.signedDocumentUrl ? (
+              <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between gap-2 shadow-3xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <FileCheck size={17} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono font-bold text-emerald-800 uppercase tracking-wider">
+                        Status Dokumen Fisik
+                      </span>
+                      <span className="text-[9px] bg-emerald-200 text-emerald-900 px-1.5 py-0.2 rounded font-bold">
+                        Sah
+                      </span>
+                    </div>
+                    <span className="text-xs font-bold text-emerald-950 block truncate">
+                      ✓ Telah Ditandatangani Basah &amp; Discan
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenViewerModal(currentMemo)}
+                    className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold rounded-lg transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                    title="Lihat berkas scan dokumen bertanda tangan"
+                  >
+                    <Eye size={12} />
+                    <span>Lihat Scan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenScanModal(currentMemo)}
+                    className="p-1.5 bg-white hover:bg-stone-100 text-stone-700 border border-stone-250 rounded-lg transition cursor-pointer"
+                    title="Ganti atau scan ulang berkas ini"
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-stone-50 border border-dashed border-stone-300 rounded-xl flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Printer size={16} className="text-stone-400 shrink-0" />
+                  <div className="text-xs text-stone-600 truncate">
+                    <span>Dokumen sudah dicetak &amp; ditandatangani basah?</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenScanModal(currentMemo)}
+                  className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-3xs"
+                >
+                  <Camera size={13} />
+                  <span>Scan / Upload TTD</span>
+                </button>
+              </div>
+            )}
 
             {/* Link from Voucher Button */}
             {submissions.length > 0 && (
@@ -1541,24 +1799,43 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={handleSaveCurrentMemo}
-                  className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Save size={15} />
-                  <span>Simpan Perubahan</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDuplicateMemo(currentMemo)}
-                  className="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold rounded-xl transition flex items-center gap-1"
-                  title="Duplikasi sebagai memo baru"
-                >
-                  <Copy size={15} />
-                  <span className="hidden sm:inline">Duplikasi</span>
-                </button>
+              <div className="space-y-2 pt-3">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSaveCurrentMemo({ forceUploadDrive: true })}
+                    disabled={isUploadingDrive}
+                    className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {isUploadingDrive ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <Save size={15} />
+                    )}
+                    <span>{isUploadingDrive ? 'Menyimpan & Upload ke Drive...' : 'Simpan & Upload ke Google Drive'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDuplicateMemo(currentMemo)}
+                    className="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer"
+                    title="Duplikasi sebagai memo baru"
+                  >
+                    <Copy size={15} />
+                    <span className="hidden sm:inline">Duplikasi</span>
+                  </button>
+                </div>
+
+                {onCreateVoucher && (
+                  <button
+                    type="button"
+                    onClick={() => onCreateVoucher(currentMemo)}
+                    className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-bold rounded-xl transition shadow-3xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    title="Buat Formulir Pengajuan Voucher HO dari data Internal Memo ini"
+                  >
+                    <Plus size={14} />
+                    <span>⚡ Buat Voucher HO dari Memo Ini</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1604,8 +1881,23 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               </p>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <div className="relative flex-1 sm:w-64">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={handleBulkSyncAllToDrive}
+                disabled={isBulkSyncing}
+                className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-xs shrink-0 cursor-pointer"
+                title="Cadangkan semua berkas memo yang belum tersinkronisasi ke Google Drive"
+              >
+                {isBulkSyncing ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <CloudUpload size={13} />
+                )}
+                <span>Cadangkan ke Drive ({memos.filter(m => m.driveUrl).length}/{memos.length})</span>
+              </button>
+
+              <div className="relative flex-1 sm:w-56">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
                 <input
                   type="text"
@@ -1617,7 +1909,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               </div>
               <button
                 onClick={handleCreateNewMemo}
-                className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shrink-0"
+                className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shrink-0 cursor-pointer"
               >
                 <Plus size={14} /> Buat Memo
               </button>
@@ -1640,10 +1932,64 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   }`}
                 >
                   <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
-                        {memo.nomorMemo}
-                      </span>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
+                          {memo.nomorMemo}
+                        </span>
+                        {memo.driveUrl ? (
+                          <a
+                            href={memo.driveUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition shadow-3xs"
+                            title="Buka dokumen PDF resmi di Google Drive"
+                          >
+                            <Cloud className="w-3 h-3 text-emerald-600" />
+                            <span>✓ Di Drive</span>
+                            <ExternalLink size={9} />
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleUploadSpecificMemoToDrive(memo)}
+                            disabled={syncingMemoId === memo.id}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition cursor-pointer shadow-3xs"
+                            title="Simpan dokumen PDF memo ini ke Google Drive"
+                          >
+                            {syncingMemoId === memo.id ? (
+                              <Loader2 size={10} className="animate-spin text-amber-700" />
+                            ) : (
+                              <CloudUpload size={10} className="text-amber-700" />
+                            )}
+                            <span>{syncingMemoId === memo.id ? 'Mengunggah...' : 'Upload ke Drive'}</span>
+                          </button>
+                        )}
+
+                        {/* Status Berkas Scan Bertanda Tangan */}
+                        {memo.signedDocumentUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenViewerModal(memo)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 transition shadow-3xs cursor-pointer"
+                            title="Lihat berkas scan fisik bertanda tangan basah"
+                          >
+                            <FileCheck size={11} className="text-emerald-700" />
+                            <span>✓ TTD Lengkap</span>
+                            <Eye size={10} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenScanModal(memo)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-950 border border-stone-300 hover:border-amber-300 transition cursor-pointer shadow-3xs"
+                            title="Scan printer atau upload berkas memo yang sudah ditandatangani"
+                          >
+                            <Camera size={10} className="text-stone-500" />
+                            <span>Scan TTD</span>
+                          </button>
+                        )}
+                      </div>
                       <span className="text-[11px] text-stone-500">
                         {memo.hariTanggalDisplay}
                       </span>
@@ -1667,16 +2013,51 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-stone-100">
+                  <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-stone-100 flex-wrap">
+                    {onCreateVoucher && (
+                      <button
+                        type="button"
+                        onClick={() => onCreateVoucher(memo)}
+                        className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-bold rounded-lg transition flex items-center gap-1 shadow-3xs cursor-pointer mr-auto"
+                        title="Buat Formulir Pengajuan Voucher HO dari data Internal Memo ini"
+                      >
+                        <Plus size={13} />
+                        <span>Voucher HO</span>
+                      </button>
+                    )}
+
+                    {memo.signedDocumentUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenViewerModal(memo)}
+                        className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                        title="Lihat berkas scan bertanda tangan basah"
+                      >
+                        <Eye size={13} />
+                        <span>Lihat Scan</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenScanModal(memo)}
+                        className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-extrabold rounded-lg transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                        title="Scan atau upload memo yang telah ditandatangani basah"
+                      >
+                        <Camera size={13} />
+                        <span>Scan TTD</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => handleSelectMemoFromHistory(memo)}
-                      className="px-2.5 py-1 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-lg transition flex items-center gap-1"
+                      className="px-2.5 py-1 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
                     >
                       <Edit size={13} /> Buka di Editor
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         handleSelectMemoFromHistory(memo);
+                        await handleSaveCurrentMemo({ forceUploadDrive: true });
                         document.body.classList.add('is-printing-internal-memo');
                         setTimeout(() => {
                           window.print();
@@ -1685,21 +2066,21 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                           }, 1000);
                         }, 200);
                       }}
-                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition"
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition cursor-pointer"
                       title="Cetak langsung"
                     >
                       <Printer size={13} />
                     </button>
                     <button
                       onClick={() => handleDuplicateMemo(memo)}
-                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition"
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition cursor-pointer"
                       title="Duplikasi memo"
                     >
                       <Copy size={13} />
                     </button>
                     <button
                       onClick={() => handleDeleteMemo(memo.id)}
-                      className="px-2 py-1 bg-stone-100 hover:bg-red-100 text-stone-500 hover:text-red-700 text-xs font-bold rounded-lg transition"
+                      className="px-2 py-1 bg-stone-100 hover:bg-red-100 text-stone-500 hover:text-red-700 text-xs font-bold rounded-lg transition cursor-pointer"
                       title="Hapus memo"
                     >
                       <Trash2 size={13} />
@@ -1720,6 +2101,48 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         onSaveAccounts={handleSaveBankAccounts}
         onSelectAccount={handleSelectBankAccount}
       />
+
+      {/* Off-screen memo document renderer for Google Drive upload */}
+      {hiddenMemoForDrive && (
+        <div className="fixed -left-[9999px] -top-[9999px] w-[850px] pointer-events-none opacity-0" aria-hidden="true">
+          <InternalMemoDocument
+            id="hidden-memo-printable-document"
+            memo={hiddenMemoForDrive}
+            customLogoUrl={userProfile?.companyDetails?.logoUrl}
+          />
+        </div>
+      )}
+
+      {/* SCAN / UPLOAD SIGNED MEMO MODAL */}
+      {targetMemoForScan && (
+        <ScanUploadSignedMemoModal
+          isOpen={isScanModalOpen}
+          onClose={() => {
+            setIsScanModalOpen(false);
+            setTargetMemoForScan(null);
+          }}
+          memo={targetMemoForScan}
+          onSaveSignedDocument={handleSaveSignedDocument}
+          onPrintOriginalDocument={handlePrint}
+        />
+      )}
+
+      {/* SIGNED MEMO VIEWER MODAL */}
+      {targetMemoForScan && (
+        <SignedMemoViewerModal
+          isOpen={isViewerModalOpen}
+          onClose={() => {
+            setIsViewerModalOpen(false);
+            setTargetMemoForScan(null);
+          }}
+          memo={targetMemoForScan}
+          onReuploadScan={() => {
+            setIsViewerModalOpen(false);
+            setIsScanModalOpen(true);
+          }}
+          onDeleteScan={() => handleDeleteSignedDocument(targetMemoForScan.id)}
+        />
+      )}
     </div>
   );
 };

@@ -148,6 +148,83 @@ export class MemoGoogleDriveService {
       };
     }
   }
+
+  /**
+   * Uploads a scanned/signed document file (from physical printer scanner or camera) to Google Drive
+   */
+  public async uploadSignedDocument(
+    memo: InternalMemo,
+    fileBlob: Blob,
+    originalFileName?: string
+  ): Promise<MemoDriveUploadResult> {
+    try {
+      let d = new Date();
+      if (memo.tanggal) {
+        const parts = memo.tanggal.split('T')[0].split('-');
+        if (parts.length === 3) {
+          d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        } else {
+          d = new Date(memo.tanggal);
+        }
+      }
+      if (isNaN(d.getTime())) d = new Date();
+
+      const yearStr = d.getFullYear().toString();
+      const monthNamesIndo = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ];
+      const monthIdx = d.getMonth();
+      const monthNum = String(monthIdx + 1).padStart(2, '0');
+      const monthFolderName = `${monthNum} - ${monthNamesIndo[monthIdx]}`;
+      const dayNum = String(d.getDate()).padStart(2, '0');
+      const dateFolderName = `${yearStr}-${monthNum}-${dayNum}`;
+
+      const rootFolderName = 'INTERNAL-MEMO-NMSA';
+      const folderHierarchy = [rootFolderName, yearStr, monthFolderName, dateFolderName];
+      const folderPathStr = folderHierarchy.join('/');
+
+      let ext = 'pdf';
+      if (fileBlob.type === 'image/jpeg' || fileBlob.type === 'image/jpg') ext = 'jpg';
+      else if (fileBlob.type === 'image/png') ext = 'png';
+      else if (originalFileName && originalFileName.includes('.')) {
+        ext = originalFileName.split('.').pop() || 'pdf';
+      }
+
+      const safeNomor = (memo.nomorMemo || 'IM-NMSA')
+        .replace(/[\/\\?%*:|"<>]/g, '-')
+        .replace(/\s+/g, '_');
+      const safePerihal = (memo.perihal || 'Dokumen')
+        .replace(/[\/\\?%*:|"<>]/g, '')
+        .replace(/\s+/g, '_')
+        .slice(0, 30);
+      const fileName = `TTD_SCAN_IM_${safeNomor}_${safePerihal}.${ext}`;
+
+      const result = await this.withDriveToken(async (token) => {
+        const folderId = await getOrCreateNestedFolder(token, folderHierarchy);
+        const uploadRes = await uploadFileToDrive(token, folderId, fileName, fileBlob);
+        return {
+          fileId: uploadRes.id,
+          url: uploadRes.webViewLink,
+          folderId,
+        };
+      });
+
+      return {
+        success: true,
+        fileId: result.fileId,
+        url: result.url,
+        folderPath: folderPathStr,
+        folderId: result.folderId,
+      };
+    } catch (err: any) {
+      console.error('Error uploading signed memo to Google Drive:', err);
+      return {
+        success: false,
+        error: err.message || 'Gagal mengunggah Berkas Tanda Tangan ke Google Drive.',
+      };
+    }
+  }
 }
 
 export const memoGoogleDriveService = new MemoGoogleDriveService();
