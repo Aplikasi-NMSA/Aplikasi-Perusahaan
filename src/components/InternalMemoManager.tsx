@@ -3,14 +3,23 @@ import { InternalMemo, BankAccountMaster, Submission } from '../types';
 import {
   formatHariTanggalMemo,
   generateDefaultMemoNumber,
+  getNextMemoSequence,
+  generateNextMemoNumber,
   getSavedBankAccounts,
   saveBankAccounts,
   getSavedInternalMemos,
   saveInternalMemos,
   createInitialMemo,
+  generateMemoPdfBlobFromElement,
   OFFICIAL_KOP_SURAT_IMAGE_URL,
   parseDari,
 } from '../utils/memoUtils';
+import { memoGoogleDriveService } from '../utils/memoDriveService';
+import {
+  saveInternalMemoToFirestore,
+  getInternalMemosFromFirestore,
+  deleteInternalMemoFromFirestore,
+} from '../firebase';
 import { InternalMemoDocument } from './InternalMemoDocument';
 import { ManageBankAccountsModal } from './ManageBankAccountsModal';
 import { MemoRichEditor } from './MemoRichEditor';
@@ -39,6 +48,11 @@ import {
   Image as ImageIcon,
   Users,
   UserCheck,
+  Cloud,
+  FolderCheck,
+  CloudUpload,
+  ExternalLink,
+  Loader2,
 } from 'lucide-react';
 
 const COMMON_MEMO_SIGNERS = [
@@ -67,10 +81,25 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   const [bankAccounts, setBankAccounts] = useState<BankAccountMaster[]>(() => getSavedBankAccounts());
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
 
-  // Active memo being edited
+  // Google Drive backup state
+  const [isAutoDriveUploadEnabled, setIsAutoDriveUploadEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('NMSA_MEMO_AUTO_DRIVE_BACKUP') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [isUploadingDrive, setIsUploadingDrive] = useState(false);
+  const [syncingMemoId, setSyncingMemoId] = useState<string | null>(null);
+  const [isBulkSyncing, setIsBulkSyncing] = useState(false);
+  const [driveSuccessMsg, setDriveSuccessMsg] = useState('');
+  const [driveErrorMsg, setDriveErrorMsg] = useState('');
+  const [hiddenMemoForDrive, setHiddenMemoForDrive] = useState<InternalMemo | null>(null);
+
+  // Active memo being edited - automatically sequential
   const [currentMemo, setCurrentMemo] = useState<InternalMemo>(() => {
     if (initialSubmissionForMemo) {
-      return createInitialMemo(initialSubmissionForMemo, memos.length + 163);
+      return createInitialMemo(initialSubmissionForMemo, memos);
     }
     if (memos.length > 0) {
       return {
@@ -79,13 +108,71 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         companyHeaderUrl: memos[0].companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL,
       };
     }
-    return createInitialMemo(null, 163);
+    return createInitialMemo(null, memos);
   });
 
-  // If initialSubmissionForMemo changes, update currentMemo
+  // Initial cloud sync on mount from server and Firestore
+  useEffect(() => {
+    let isMounted = true;
+    const syncMemosFromCloud = async () => {
+      try {
+        const local = getSavedInternalMemos();
+        const mergedMap = new Map<string, InternalMemo>();
+        local.forEach((m) => { if (m.id) mergedMap.set(m.id, m); });
+
+        // 1. Fetch from server backend
+        try {
+          const res = await fetch('/api/internal-memos');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.memos)) {
+              data.memos.forEach((m: InternalMemo) => {
+                if (m.id && !mergedMap.has(m.id)) {
+                  mergedMap.set(m.id, m);
+                } else if (m.id && m.updatedAt) {
+                  const existing = mergedMap.get(m.id);
+                  if (!existing?.updatedAt || new Date(m.updatedAt) > new Date(existing.updatedAt)) {
+                    mergedMap.set(m.id, m);
+                  }
+                }
+              });
+            }
+          }
+        } catch (_) {}
+
+        // 2. Fetch from Firestore
+        try {
+          const fsMemos = await getInternalMemosFromFirestore();
+          if (Array.isArray(fsMemos)) {
+            fsMemos.forEach((m) => {
+              if (m.id && !mergedMap.has(m.id)) {
+                mergedMap.set(m.id, m);
+              }
+            });
+          }
+        } catch (_) {}
+
+        if (isMounted) {
+          const mergedList = Array.from(mergedMap.values());
+          mergedList.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
+          if (mergedList.length > 0) {
+            setMemos(mergedList);
+            saveInternalMemos(mergedList);
+          }
+        }
+      } catch (err) {
+        console.warn('Error syncing internal memos on mount:', err);
+      }
+    };
+
+    syncMemosFromCloud();
+    return () => { isMounted = false; };
+  }, []);
+
+  // If initialSubmissionForMemo changes, update currentMemo with sequential number
   useEffect(() => {
     if (initialSubmissionForMemo) {
-      const newMemo = createInitialMemo(initialSubmissionForMemo, memos.length + 163);
+      const newMemo = createInitialMemo(initialSubmissionForMemo, memos);
       setCurrentMemo(newMemo);
       setActiveTab('editor');
     }
@@ -117,15 +204,23 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     saveInternalMemos(updated);
   };
 
-  // Save current memo
-  const handleSaveCurrentMemo = () => {
+  // Save auto drive upload preference
+  const handleToggleAutoDrive = (enabled: boolean) => {
+    setIsAutoDriveUploadEnabled(enabled);
+    try {
+      localStorage.setItem('NMSA_MEMO_AUTO_DRIVE_BACKUP', enabled ? 'true' : 'false');
+    } catch (_) {}
+  };
+
+  // Save current memo to Riwayat & optionally to Google Drive
+  const handleSaveCurrentMemo = async (options?: { forceUploadDrive?: boolean }) => {
     const existingIndex = memos.findIndex((m) => m.id === currentMemo.id);
-    let updated: InternalMemo[];
-    const payload = {
+    let payload: InternalMemo = {
       ...currentMemo,
       updatedAt: new Date().toISOString(),
     };
 
+    let updated: InternalMemo[];
     if (existingIndex >= 0) {
       updated = [...memos];
       updated[existingIndex] = payload;
@@ -134,35 +229,197 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     }
 
     persistMemos(updated);
-    setSaveSuccessMsg('Internal Memo berhasil disimpan ke daftar riwayat!');
+
+    // Sync to backend server
+    try {
+      fetch('/api/internal-memos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memo: payload }),
+      }).catch((e) => console.warn('Server memo sync error:', e));
+    } catch (_) {}
+
+    // Sync to Firestore Cloud
+    try {
+      saveInternalMemoToFirestore(payload).catch((e) => console.warn('Firestore memo sync error:', e));
+    } catch (_) {}
+
+    setSaveSuccessMsg('Internal Memo tersimpan di Riwayat!');
+
+    const shouldUploadDrive = options?.forceUploadDrive || isAutoDriveUploadEnabled;
+
+    if (shouldUploadDrive) {
+      setIsUploadingDrive(true);
+      setDriveErrorMsg('');
+      setDriveSuccessMsg('');
+
+      try {
+        const docElem = document.getElementById('internal-memo-printable-document');
+        const driveRes = await memoGoogleDriveService.uploadMemo(payload, docElem || undefined);
+
+        if (driveRes.success && driveRes.url) {
+          payload = {
+            ...payload,
+            driveUrl: driveRes.url,
+            driveFileId: driveRes.fileId,
+            driveFolderPath: driveRes.folderPath,
+            driveSyncedAt: new Date().toISOString(),
+          };
+
+          const reUpdated = updated.map((m) => (m.id === payload.id ? payload : m));
+          persistMemos(reUpdated);
+          setCurrentMemo(payload);
+
+          // Update backend & Firestore with Drive link
+          fetch('/api/internal-memos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ memo: payload }),
+          }).catch(() => {});
+          saveInternalMemoToFirestore(payload).catch(() => {});
+
+          setDriveSuccessMsg(`Tersimpan di Google Drive: ${driveRes.folderPath}`);
+          setTimeout(() => setDriveSuccessMsg(''), 7000);
+        } else if (driveRes.error) {
+          setDriveErrorMsg(`Google Drive: ${driveRes.error}`);
+          setTimeout(() => setDriveErrorMsg(''), 6000);
+        }
+      } catch (err: any) {
+        setDriveErrorMsg(`Gagal upload ke Drive: ${err.message}`);
+        setTimeout(() => setDriveErrorMsg(''), 6000);
+      } finally {
+        setIsUploadingDrive(false);
+      }
+    }
+
     setTimeout(() => setSaveSuccessMsg(''), 3500);
   };
 
-  // Create new blank / default memo
-  const handleCreateNewMemo = () => {
-    const fresh = createInitialMemo(null, memos.length + 164);
-    setCurrentMemo(fresh);
-    setActiveTab('editor');
-    setSaveSuccessMsg('Draf memo baru telah dibuat.');
-    setTimeout(() => setSaveSuccessMsg(''), 2500);
+  // Upload specific memo from history to Google Drive
+  const handleUploadSpecificMemoToDrive = async (targetMemo: InternalMemo) => {
+    setSyncingMemoId(targetMemo.id);
+    setHiddenMemoForDrive(targetMemo);
+
+    try {
+      // Allow off-screen DOM element to render
+      await new Promise((res) => setTimeout(res, 350));
+      const hiddenElem = document.getElementById('hidden-memo-printable-document');
+
+      const driveRes = await memoGoogleDriveService.uploadMemo(targetMemo, hiddenElem || undefined);
+
+      if (driveRes.success && driveRes.url) {
+        const updatedMemo: InternalMemo = {
+          ...targetMemo,
+          driveUrl: driveRes.url,
+          driveFileId: driveRes.fileId,
+          driveFolderPath: driveRes.folderPath,
+          driveSyncedAt: new Date().toISOString(),
+        };
+
+        const updatedList = memos.map((m) => (m.id === updatedMemo.id ? updatedMemo : m));
+        persistMemos(updatedList);
+        if (currentMemo.id === updatedMemo.id) {
+          setCurrentMemo(updatedMemo);
+        }
+
+        // Sync to server and Firestore
+        fetch('/api/internal-memos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memo: updatedMemo }),
+        }).catch(() => {});
+        saveInternalMemoToFirestore(updatedMemo).catch(() => {});
+
+        setDriveSuccessMsg(`Memo ${targetMemo.nomorMemo} berhasil disimpan di Google Drive: ${driveRes.folderPath}!`);
+        setTimeout(() => setDriveSuccessMsg(''), 6000);
+      } else if (driveRes.error) {
+        setDriveErrorMsg(driveRes.error);
+        setTimeout(() => setDriveErrorMsg(''), 6000);
+      }
+    } catch (e: any) {
+      setDriveErrorMsg(e.message || 'Gagal menyimpan ke Google Drive.');
+      setTimeout(() => setDriveErrorMsg(''), 6000);
+    } finally {
+      setSyncingMemoId(null);
+      setHiddenMemoForDrive(null);
+    }
   };
 
-  // Duplicate current memo
+  // Bulk sync all un-synced memos to Google Drive
+  const handleBulkSyncAllToDrive = async () => {
+    const unsynced = memos.filter((m) => !m.driveUrl);
+    if (unsynced.length === 0) {
+      setSaveSuccessMsg('Semua memo sudah tersimpan di Google Drive!');
+      setTimeout(() => setSaveSuccessMsg(''), 3000);
+      return;
+    }
+
+    if (!window.confirm(`Simpan ${unsynced.length} memo ke Google Drive sekarang? Berkas akan disimpan dalam folder terpisah tahun, bulan, dan tanggal.`)) {
+      return;
+    }
+
+    setIsBulkSyncing(true);
+    let successCount = 0;
+
+    for (const m of unsynced) {
+      try {
+        setHiddenMemoForDrive(m);
+        await new Promise((res) => setTimeout(res, 300));
+        const hiddenElem = document.getElementById('hidden-memo-printable-document');
+        const res = await memoGoogleDriveService.uploadMemo(m, hiddenElem || undefined);
+        if (res.success && res.url) {
+          const updatedMemo: InternalMemo = {
+            ...m,
+            driveUrl: res.url,
+            driveFileId: res.fileId,
+            driveFolderPath: res.folderPath,
+            driveSyncedAt: new Date().toISOString(),
+          };
+          setMemos((prev) => prev.map((x) => (x.id === m.id ? updatedMemo : x)));
+          saveInternalMemos(getSavedInternalMemos().map((x) => (x.id === m.id ? updatedMemo : x)));
+          saveInternalMemoToFirestore(updatedMemo).catch(() => {});
+          successCount++;
+        }
+      } catch (err) {
+        console.warn(`Failed to sync memo ${m.nomorMemo}:`, err);
+      }
+    }
+
+    setHiddenMemoForDrive(null);
+    setIsBulkSyncing(false);
+    setDriveSuccessMsg(`Selesai! ${successCount} dari ${unsynced.length} memo berhasil disimpan ke Google Drive.`);
+    setTimeout(() => setDriveSuccessMsg(''), 6000);
+  };
+
+  // Create new blank / default memo with next accumulated sequence
+  const handleCreateNewMemo = () => {
+    const fresh = createInitialMemo(null, memos);
+    setCurrentMemo(fresh);
+    setActiveTab('editor');
+    setSaveSuccessMsg(`Draf memo baru dengan Nomor ${fresh.nomorMemo} siap diedit.`);
+    setTimeout(() => setSaveSuccessMsg(''), 3000);
+  };
+
+  // Duplicate current memo with next accumulated sequence
   const handleDuplicateMemo = (memoToDupe: InternalMemo = currentMemo) => {
-    const nextSeq = memos.length + 164;
+    const nextNomor = generateNextMemoNumber(memos, new Date(), 168);
     const duplicated: InternalMemo = {
       ...memoToDupe,
       id: `memo-${Date.now()}`,
-      nomorMemo: generateDefaultMemoNumber(nextSeq, new Date()),
+      nomorMemo: nextNomor,
       tanggal: new Date().toISOString().split('T')[0],
       hariTanggalDisplay: formatHariTanggalMemo(new Date()),
+      driveFileId: undefined,
+      driveUrl: undefined,
+      driveFolderPath: undefined,
+      driveSyncedAt: undefined,
       createdAt: new Date().toISOString(),
     };
     persistMemos([duplicated, ...memos]);
     setCurrentMemo(duplicated);
     setActiveTab('editor');
-    setSaveSuccessMsg('Memo berhasil diduplikasi sebagai nomor memo baru.');
-    setTimeout(() => setSaveSuccessMsg(''), 2500);
+    setSaveSuccessMsg(`Memo diduplikasi sebagai Nomor baru: ${nextNomor}`);
+    setTimeout(() => setSaveSuccessMsg(''), 3500);
   };
 
   // Delete a memo
@@ -170,11 +427,18 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     if (window.confirm('Hapus memo internal ini dari riwayat?')) {
       const updated = memos.filter((m) => m.id !== id);
       persistMemos(updated);
+
+      // Delete from server & Firestore
+      try {
+        fetch(`/api/internal-memos/${id}`, { method: 'DELETE' }).catch(() => {});
+        deleteInternalMemoFromFirestore(id).catch(() => {});
+      } catch (_) {}
+
       if (currentMemo.id === id) {
         if (updated.length > 0) {
           setCurrentMemo(updated[0]);
         } else {
-          setCurrentMemo(createInitialMemo(null, 164));
+          setCurrentMemo(createInitialMemo(null, updated));
         }
       }
     }

@@ -93,6 +93,56 @@ export function generateDefaultMemoNumber(sequence = 164, date = new Date()): st
   return `${seqStr}/IM-NMSA/KEU/${roman}/${year}`;
 }
 
+/**
+ * Extracts sequence number from memo number string like "168/IM-NMSA/KEU/IX/2026" -> 168
+ */
+export function extractMemoSequence(nomorMemo: string | undefined): number | null {
+  if (!nomorMemo) return null;
+  const match = nomorMemo.trim().match(/^(\d+)/);
+  if (match && match[1]) {
+    const val = parseInt(match[1], 10);
+    return isNaN(val) ? null : val;
+  }
+  return null;
+}
+
+/**
+ * Calculates the next sequential accumulated memo number based on all existing memos.
+ * Always increments by +1 from the highest existing memo number found.
+ */
+export function getNextMemoSequence(existingMemos: InternalMemo[] = [], baseSequence = 164): number {
+  if (!existingMemos || existingMemos.length === 0) {
+    return baseSequence;
+  }
+  let maxSeq = baseSequence - 1;
+  for (const m of existingMemos) {
+    const seq = extractMemoSequence(m.nomorMemo);
+    if (seq !== null && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  }
+  return maxSeq + 1;
+}
+
+/**
+ * Generates the next official sequential memo number, automatically accumulating
+ */
+export function generateNextMemoNumber(
+  existingMemosOrCount: InternalMemo[] | number = [],
+  date = new Date(),
+  baseSequence = 164
+): string {
+  let nextSeq: number;
+  if (Array.isArray(existingMemosOrCount)) {
+    nextSeq = getNextMemoSequence(existingMemosOrCount, baseSequence);
+  } else if (typeof existingMemosOrCount === 'number') {
+    nextSeq = existingMemosOrCount;
+  } else {
+    nextSeq = baseSequence;
+  }
+  return generateDefaultMemoNumber(nextSeq, date);
+}
+
 export function getSavedBankAccounts(): BankAccountMaster[] {
   try {
     const raw = localStorage.getItem('NMSA_SAVED_BANK_ACCOUNTS');
@@ -148,12 +198,19 @@ export function saveInternalMemos(memos: InternalMemo[]): void {
   }
 }
 
-export function createInitialMemo(submission?: Submission | null, existingCount = 163): InternalMemo {
+/**
+ * Creates initial memo with sequential number accumulation
+ */
+export function createInitialMemo(
+  submission?: Submission | null,
+  existingMemosOrCount: InternalMemo[] | number = []
+): InternalMemo {
   const now = new Date();
   const todayIso = now.toISOString().split('T')[0];
   const hariTanggalDisplay = formatHariTanggalMemo(now);
   const defaultAccounts = getSavedBankAccounts();
   const defaultBank = defaultAccounts.find(a => a.isDefault) || defaultAccounts[0] || DEFAULT_BANK_ACCOUNTS[0];
+  const nextNomorMemo = generateNextMemoNumber(existingMemosOrCount, now, 168);
 
   if (submission) {
     const subTotal = (submission.items || []).reduce((sum, item) => sum + (item.total || 0), 0);
@@ -163,7 +220,7 @@ export function createInitialMemo(submission?: Submission | null, existingCount 
 
     return {
       id: `memo-${Date.now()}`,
-      nomorMemo: generateDefaultMemoNumber(existingCount + 1, now),
+      nomorMemo: nextNomorMemo,
       tanggal: todayIso,
       hariTanggalDisplay,
       dari: 'H. A. Nursyam Halid – Direktur Utama',
@@ -194,7 +251,7 @@ export function createInitialMemo(submission?: Submission | null, existingCount 
   // Default sample exactly matching user's official "IM - Pembayaran Tongkang" Word document
   return {
     id: `memo-${Date.now()}`,
-    nomorMemo: '168/IM-NMSA/KEU/IX/2026',
+    nomorMemo: nextNomorMemo,
     tanggal: todayIso,
     hariTanggalDisplay: 'Kamis / 24 September 2026',
     dari: 'Andi Muhammad Rifki – Direktur',
@@ -223,4 +280,36 @@ export function createInitialMemo(submission?: Submission | null, existingCount 
     useImageHeader: false, // Default to official layout with long line like Word document
     createdAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Generates an official A4 PDF Blob from a rendered Internal Memo DOM element
+ */
+export async function generateMemoPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
+  const html2canvasModule = await import('html2canvas');
+  const html2canvas = (html2canvasModule.default || html2canvasModule) as any;
+  const { jsPDF } = await import('jspdf');
+
+  const canvas = await html2canvas(element, {
+    scale: 2,
+    useCORS: true,
+    allowTaint: true,
+    backgroundColor: '#ffffff',
+    logging: false,
+    windowWidth: 850,
+  });
+
+  const imgData = canvas.toDataURL('image/jpeg', 0.96);
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
+  const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
+  const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+
+  pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(imgHeight, pdfHeight));
+  return pdf.output('blob');
 }

@@ -1464,6 +1464,9 @@ function readState() {
       if (!parsed.submissions) {
         parsed.submissions = [];
       }
+      if (!parsed.internalMemos) {
+        parsed.internalMemos = [];
+      }
       if (!parsed.accurateAccounts) {
         parsed.accurateAccounts = [];
       }
@@ -1542,6 +1545,7 @@ function readState() {
     sppdRecords: [],
     agendaItems: [],
     submissions: [],
+    internalMemos: [],
     accurateAccounts: [],
     accurateMappedReports: [],
     auditLogs: [],
@@ -1850,6 +1854,9 @@ app.get("/api/unified-storage", (req, res) => {
       menu6_agenda_kerja: {
         agendaItems: state.agendaItems || []
       },
+      menu_internal_memos: {
+        internalMemos: state.internalMemos || []
+      },
       menu7_proyek_rab: {
         projects: state.projects || [],
         projectRab: state.projectRab || [],
@@ -1880,6 +1887,7 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.npwpRecords !== undefined) state.npwpRecords = incoming.npwpRecords;
     if (incoming.sppdRecords !== undefined) state.sppdRecords = incoming.sppdRecords;
     if (incoming.agendaItems !== undefined) state.agendaItems = incoming.agendaItems;
+    if (incoming.internalMemos !== undefined) state.internalMemos = incoming.internalMemos;
     if (incoming.projects !== undefined) state.projects = incoming.projects;
     if (incoming.projectRab !== undefined) state.projectRab = incoming.projectRab;
     if (incoming.projectExpenses !== undefined) state.projectExpenses = incoming.projectExpenses;
@@ -3473,6 +3481,60 @@ app.get(["/api/submissions/:id", "/api/submissions/single"], (req, res) => {
       return res.json({ success: true, submission: sub });
     }
     return res.status(404).json({ success: false, error: "Transaksi tidak ditemukan di penyimpanan server." });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/internal-memos (Fetch all saved internal memos)
+app.get("/api/internal-memos", (req, res) => {
+  try {
+    const state = readState();
+    return res.json({ success: true, memos: state.internalMemos || [] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/internal-memos (Save single memo or sync batch of memos)
+app.post("/api/internal-memos", (req, res) => {
+  try {
+    const { memo, memos } = req.body;
+    const state = readState();
+    if (!state.internalMemos) state.internalMemos = [];
+
+    if (Array.isArray(memos)) {
+      const map = new Map();
+      (state.internalMemos || []).forEach((m: any) => { if (m && m.id) map.set(m.id, m); });
+      memos.forEach((m: any) => { if (m && m.id) map.set(m.id, m); });
+      state.internalMemos = Array.from(map.values());
+      writeState(state);
+      return res.json({ success: true, count: state.internalMemos.length });
+    } else if (memo && memo.id) {
+      const idx = state.internalMemos.findIndex((m: any) => m.id === memo.id);
+      if (idx >= 0) {
+        state.internalMemos[idx] = memo;
+      } else {
+        state.internalMemos.unshift(memo);
+      }
+      writeState(state);
+      return res.json({ success: true, memo });
+    } else {
+      return res.status(400).json({ error: "Payload harus berisi memo atau memos." });
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/internal-memos/:id (Delete memo from backend state)
+app.delete("/api/internal-memos/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const state = readState();
+    state.internalMemos = (state.internalMemos || []).filter((m: any) => m.id !== id);
+    writeState(state);
+    return res.json({ success: true, id });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -25,7 +25,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup
 } from 'firebase/auth';
-import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile } from './types';
+import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo } from './types';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
 
 export enum OperationType {
@@ -2590,6 +2590,51 @@ export const clearFirebaseConfig = () => {
   firebaseApp = null;
   firestoreDb = null;
   firebaseAuth = null;
+};
+
+// --- Internal Memo Firestore Cloud Methods ---
+export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<void> => {
+  if (!isFirebaseConfigured() || !firestoreDb) return;
+  try {
+    const docRef = doc(firestoreDb, 'internal_memos', memo.id);
+    const cleaned = cleanUndefined({
+      ...memo,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(docRef, cleaned, { merge: true });
+    console.log(`☁️ Internal Memo ${memo.id} (${memo.nomorMemo}) successfully saved to Firestore.`);
+  } catch (err) {
+    console.warn('Failed to save internal memo to Firestore:', err);
+  }
+};
+
+export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> => {
+  if (!isFirebaseConfigured() || !firestoreDb) return [];
+  try {
+    const colRef = collection(firestoreDb, 'internal_memos');
+    const snap = await getDocs(colRef);
+    const list: InternalMemo[] = [];
+    snap.forEach((d) => {
+      list.push({ id: d.id, ...d.data() } as InternalMemo);
+    });
+    // Sort descending by createdAt or tanggal
+    list.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
+    return list;
+  } catch (err) {
+    console.warn('Failed to fetch internal memos from Firestore:', err);
+    return [];
+  }
+};
+
+export const deleteInternalMemoFromFirestore = async (id: string): Promise<void> => {
+  if (!isFirebaseConfigured() || !firestoreDb) return;
+  try {
+    const docRef = doc(firestoreDb, 'internal_memos', id);
+    await deleteDoc(docRef);
+    console.log(`☁️ Internal Memo ${id} deleted from Firestore.`);
+  } catch (err) {
+    console.warn('Failed to delete internal memo from Firestore:', err);
+  }
 };
 
 // Load initial config checking

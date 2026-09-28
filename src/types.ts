@@ -523,6 +523,11 @@ export interface InternalMemo {
   companyLogoUrl?: string;
   companyHeaderUrl?: string;
   useImageHeader?: boolean;
+  driveFileId?: string;
+  driveUrl?: string;
+  driveFolderId?: string;
+  driveFolderPath?: string;
+  driveSyncedAt?: string;
   createdAt: string;
   updatedAt?: string;
 }
