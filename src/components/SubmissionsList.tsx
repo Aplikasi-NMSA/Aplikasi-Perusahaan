@@ -3686,8 +3686,23 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         const shareSlug = cleanSlug(shareModalSub.jenisPengajuan);
         const isLunas = (shareModalSub.status || '').toLowerCase() === 'lunas' || shareModalSub.dibayarkanDengan === 'Cek/Transfer';
 
-        const shareUrl = `${window.location.origin}/shared-view?id=${shareModalSub.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
-        const shareImageUrl = `/api/share-image?id=${encodeURIComponent(shareModalSub.id)}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+        const shareParams = new URLSearchParams();
+        shareParams.set('id', shareModalSub.id);
+        if (shareModalSub.kode) shareParams.set('kode', shareModalSub.kode);
+        shareParams.set('transaksi', shareSlug);
+        shareParams.set('nominal', String(grandTotal));
+        if (shareModalSub.dibayarkanKepada) shareParams.set('kepada', shareModalSub.dibayarkanKepada);
+        if (shareModalSub.tanggal) shareParams.set('tanggal', shareModalSub.tanggal);
+        if (shareModalSub.status) shareParams.set('status', shareModalSub.status);
+        if (shareModalSub.dibayarkanDengan) shareParams.set('bayar', shareModalSub.dibayarkanDengan);
+        if (shareModalSub.items && shareModalSub.items.length > 0) {
+          try {
+            shareParams.set('items', JSON.stringify(shareModalSub.items.slice(0, 10)));
+          } catch (_) {}
+        }
+
+        const shareUrl = `${window.location.origin}/shared-view?${shareParams.toString()}`;
+        const shareImageUrl = `/api/share-image?${shareParams.toString()}`;
 
         // Ensure backend memory and persistent store has the latest submission record for share-image
         try {

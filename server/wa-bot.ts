@@ -1,41 +1,48 @@
-import * as baileys from "@whiskeysockets/baileys";
 import pino from "pino";
 import path from "path";
 import fs from "fs";
 import QRCode from "qrcode";
 
-// Safely extract baileys methods handling any ESM/CJS interop issues
-const getBaileysModule = () => {
-  if (!baileys) return {} as any;
-  return baileys;
-};
+// Safely dynamically load @whiskeysockets/baileys to support both ESM and CJS (Node 20+ on Railway & Replit)
+let baileysModuleCache: any = null;
 
-const getMakeWASocket = () => {
-  const pkg = getBaileysModule();
+async function getBaileysModule(): Promise<any> {
+  if (baileysModuleCache) return baileysModuleCache;
+  try {
+    baileysModuleCache = await import("@whiskeysockets/baileys");
+    return baileysModuleCache;
+  } catch (err: any) {
+    console.error("[WhatsApp Bot] Gagal memuat modul @whiskeysockets/baileys:", err);
+    throw err;
+  }
+}
+
+async function getMakeWASocket() {
+  const pkg = await getBaileysModule();
   if (typeof pkg.makeWASocket === "function") return pkg.makeWASocket;
   if (pkg.default && typeof pkg.default.makeWASocket === "function") return pkg.default.makeWASocket;
   if (pkg.default && typeof pkg.default.default === "function") return pkg.default.default;
   if (typeof pkg.default === "function") return pkg.default;
   return (pkg as any).makeWASocket || (pkg as any).default;
-};
+}
 
-const getUseMultiFileAuthState = () => {
-  const pkg = getBaileysModule();
+async function getUseMultiFileAuthState() {
+  const pkg = await getBaileysModule();
   if (typeof pkg.useMultiFileAuthState === "function") return pkg.useMultiFileAuthState;
   if (pkg.default && typeof pkg.default.useMultiFileAuthState === "function") return pkg.default.useMultiFileAuthState;
   return (pkg as any).useMultiFileAuthState;
-};
+}
 
-const getDisconnectReason = () => {
-  const pkg = getBaileysModule();
-  if (pkg.DisconnectReason) return pkg.DisconnectReason;
-  if (pkg.default && pkg.default.DisconnectReason) return pkg.default.DisconnectReason;
-  return (pkg as any).DisconnectReason || {};
-};
-
-const makeWASocket = getMakeWASocket();
-const useMultiFileAuthState = getUseMultiFileAuthState();
-const DisconnectReason = getDisconnectReason();
+async function getDisconnectReason() {
+  try {
+    const pkg = await getBaileysModule();
+    if (pkg.DisconnectReason) return pkg.DisconnectReason;
+    if (pkg.default && pkg.default.DisconnectReason) return pkg.default.DisconnectReason;
+    return (pkg as any).DisconnectReason || { loggedOut: 401 };
+  } catch (e) {
+    return { loggedOut: 401 };
+  }
+}
 
 const AUTH_DIR = path.join(process.cwd(), "auth_info_baileys");
 
@@ -80,6 +87,10 @@ export async function initWhatsApp() {
 
     connectionStatus = "connecting";
     lastError = null;
+
+    const makeWASocket = await getMakeWASocket();
+    const useMultiFileAuthState = await getUseMultiFileAuthState();
+    const DisconnectReason = await getDisconnectReason();
 
     console.log("Baileys integration checks:", {
       makeWASocketType: typeof makeWASocket,
@@ -432,7 +443,8 @@ _Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, s
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        const DisconnectReason = await getDisconnectReason();
+        const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
         
         console.log(`WhatsApp connection closed. Status Code: ${statusCode}, Reconnecting: ${shouldReconnect}`);
         

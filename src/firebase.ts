@@ -2050,6 +2050,25 @@ export const getSubmissionFromFirestore = async (docId: string): Promise<Submiss
     if (snap.exists()) {
       return mapFirestoreToSubmission(snap.id, snap.data());
     }
+
+    // Secondary fallback: query by field 'kode' or 'id'
+    try {
+      const qKode = query(collection(firestoreDb, 'submissions'), where('kode', '==', docId), limit(1));
+      const snapKode = await getDocs(qKode);
+      if (!snapKode.empty) {
+        const first = snapKode.docs[0];
+        return mapFirestoreToSubmission(first.id, first.data());
+      }
+    } catch (_) {}
+
+    try {
+      const qId = query(collection(firestoreDb, 'submissions'), where('id', '==', docId), limit(1));
+      const snapId = await getDocs(qId);
+      if (!snapId.empty) {
+        const first = snapId.docs[0];
+        return mapFirestoreToSubmission(first.id, first.data());
+      }
+    } catch (_) {}
   } catch (err) {
     console.warn('Error fetching single submission:', err);
   }

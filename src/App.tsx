@@ -1293,28 +1293,33 @@ export default function App() {
       } catch (ssErr) {}
 
       // Tier 6: High-Resilience URL Parameter Fallback
-      // When shared via link containing ?id=...&transaksi=...&nominal=..., synthesize official voucher
+      // When shared via link containing ?id=...&kode=...&transaksi=...&nominal=..., synthesize official voucher
       try {
         const sp = new URLSearchParams(window.location.search);
         const transaksiParam = sp.get('transaksi');
         const nominalParam = sp.get('nominal');
-        if (transaksiParam || nominalParam) {
+        const kodeParam = sp.get('kode');
+        const idParam = sp.get('id') || sharedId;
+
+        if (transaksiParam || nominalParam || kodeParam || idParam) {
           const rawNom = Number(nominalParam) || 0;
           const formattedJenis = (transaksiParam || 'Biaya Transaksi')
             .split('-')
             .map(w => w.charAt(0).toUpperCase() + w.slice(1))
             .join(' ');
 
-          const numericId = sharedId.replace(/[^0-9]/g, '');
-          const generatedCode = sp.get('kode') || `VCR-${numericId ? numericId.slice(-6) : Date.now().toString().slice(-6)}`;
+          const numericId = String(idParam).replace(/[^0-9]/g, '');
+          const generatedCode = kodeParam || (idParam.toUpperCase().startsWith('DOC-') || idParam.toUpperCase().startsWith('VCR-') 
+            ? idParam.toUpperCase() 
+            : `VCR-${numericId ? numericId.slice(-6) : Date.now().toString().slice(-6)}`);
 
           const fallbackSubmission: Submission = {
-            id: sharedId,
+            id: idParam || `sub-${Date.now()}`,
             kode: generatedCode,
             tanggal: sp.get('tanggal') || new Date().toISOString().split('T')[0],
             jenisPengajuan: formattedJenis,
-            dibayarkanKepada: sp.get('kepada') || 'Pihak Terkait / Vendor',
-            dibayarkanDengan: 'Cek/Transfer',
+            dibayarkanKepada: sp.get('kepada') || 'Pihak Terkait / Rekanan',
+            dibayarkanDengan: (sp.get('bayar') as any) || 'Cek/Transfer',
             lokasi: 'Head Office',
             diajukanOleh: 'Sri Ekowati',
             diajukanJabatan: 'Manager Keuangan',
@@ -1358,7 +1363,7 @@ export default function App() {
                 }
               ];
             })(),
-            status: 'Lunas',
+            status: (sp.get('status') as any) || 'Lunas',
             notes: 'Dokumen transaksi resmi PT Nusantara Mineral Sukses Abadi.'
           };
 
@@ -1373,7 +1378,7 @@ export default function App() {
     };
 
     resolveSubmission();
-  }, [currentHash, currentPath]);
+  }, [currentHash, currentPath, submissions.length]);
 
   // Synchronous route popstate and hashchange tracking
   useEffect(() => {
@@ -2201,8 +2206,8 @@ export default function App() {
     currentHash.includes('transaksi') ||
     searchParams.has('transaksi') ||
     searchParams.has('nominal') ||
-    (searchParams.has('id') && isSubmissionIdParam) ||
-    (searchParams.has('id') && (currentHash.includes('shared') || currentPath.includes('shared') || window.location.pathname.includes('shared-view')))
+    searchParams.has('kode') ||
+    searchParams.has('id')
   );
 
   if (isSharedViewRoute) {

@@ -22,6 +22,9 @@ const app = express();
 // Bind to 3000 in AI Studio or use PORT env var
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
+// Global reference to Vite dev server instance for HTML transforms
+let viteInstance: any = null;
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(express.static(path.join(process.cwd(), "public")));
@@ -29,7 +32,7 @@ app.use(express.static(path.join(process.cwd(), "public")));
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY tidak dikonfigurasi di server.");
+    throw new Error("GEMINI_API_KEY belum dikonfigurasi di environment server. Tambahkan GEMINI_API_KEY di tab Variables (Railway) atau Secrets (Replit).");
   }
   return new GoogleGenAI({
     apiKey: apiKey,
@@ -43,8 +46,22 @@ const PRIMARY_GEMINI_MODELS = [
   "gemini-3.8-flash",
   "gemini-flash-latest",
   "gemini-3.1-flash-lite",
-  "gemini-3.8-pro",
+  "gemini-3.1-pro-preview",
 ];
+
+// Normalize MIME types from base64 signature for robust document reading
+export function normalizeDocumentMimeType(cleanBase64: string, fallbackMime?: string): string {
+  if (!cleanBase64) return fallbackMime || "application/pdf";
+  const trimmed = cleanBase64.trim();
+  if (trimmed.startsWith("JVBERi")) return "application/pdf";
+  if (trimmed.startsWith("/9j/")) return "image/jpeg";
+  if (trimmed.startsWith("iVBORw")) return "image/png";
+  if (trimmed.startsWith("UklGR")) return "image/webp";
+  if (fallbackMime && fallbackMime !== "application/octet-stream" && fallbackMime.includes("/")) {
+    return fallbackMime;
+  }
+  return "application/pdf";
+}
 
 async function generateWithModelFallback(
   ai: ReturnType<typeof getGeminiClient>,
@@ -55,11 +72,16 @@ async function generateWithModelFallback(
   }
 ) {
   let lastError: any = null;
+  // Normalize contents to parts format required by @google/genai SDK for multimodal
+  const payloadContents = Array.isArray(generateOptions.contents)
+    ? { parts: generateOptions.contents }
+    : generateOptions.contents;
+
   for (const modelName of models) {
     try {
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: generateOptions.contents,
+        contents: payloadContents,
         config: generateOptions.config,
       });
       if (response && response.text) {
@@ -104,16 +126,32 @@ app.get("/api/gemini/status", async (req, res) => {
 app.post("/api/gemini/parse-receipt", async (req, res) => {
   try {
     const { fileBase64, mimeType } = req.body;
-    if (!fileBase64 || !mimeType) {
+    if (!fileBase64) {
       return res.status(400).json({ error: "Missing fileBase64 or mimeType representation." });
     }
     if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({ error: "GEMINI_API_KEY tidak dikonfigurasi di server." });
     }
     const ai = getGeminiClient();
-    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
-    const documentPart = { inlineData: { mimeType, data: cleanBase64 } };
-    const promptText = `Anda adalah sistem AI ekstraksi dokumen keuangan profesional. Ekstrak informasi kwitansi/faktur dalam JSON valid.`;
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+    const resolvedMime = normalizeDocumentMimeType(cleanBase64, mimeType);
+    const documentPart = { inlineData: { mimeType: resolvedMime, data: cleanBase64 } };
+    const promptText = `Anda adalah sistem AI ekstraksi dokumen keuangan profesional PT. Nusantara Mineral Sukses Abadi.
+Ekstrak informasi kwitansi/faktur/nota belanja ini ke dalam JSON valid:
+{
+  "tanggal": "YYYY-MM-DD",
+  "deskripsi": "Nama Toko / Merchant / Penerima Pembayaran",
+  "nominal": 1250000,
+  "keterangan": "Rincian singkat pembelian / keperluan barang / jasa",
+  "items": [
+    {
+      "item": "Nama barang/jasa",
+      "jumlahVolume": "1 Ls",
+      "total": 1250000,
+      "keterangan": "Rincian"
+    }
+  ]
+}`;
 
     const { response } = await generateWithModelFallback(ai, PRIMARY_GEMINI_MODELS, {
       contents: [documentPart, { text: promptText }],
@@ -123,9 +161,16 @@ app.post("/api/gemini/parse-receipt", async (req, res) => {
       },
     });
 
-    const parsedData = JSON.parse(response.text || "{}");
+    let textClean = (response.text || "").trim();
+    if (textClean.startsWith("```json")) {
+      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (textClean.startsWith("```")) {
+      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
+    const parsedData = JSON.parse(textClean || "{}");
     return res.json({ success: true, result: parsedData });
   } catch (error: any) {
+    console.error("Error in parse-receipt:", error);
     return res.status(500).json({ error: "Gagal memproses kwitansi.", details: error.message });
   }
 });
@@ -284,9 +329,10 @@ app.post("/api/gemini/parse-petty-cash", async (req, res) => {
       const ai = getGeminiClient();
       const contents: any[] = [];
 
-      if (fileBase64 && mimeType) {
-        const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
-        contents.push({ inlineData: { mimeType, data: cleanBase64 } });
+      if (fileBase64) {
+        const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+        const resolvedMime = normalizeDocumentMimeType(cleanBase64, mimeType);
+        contents.push({ inlineData: { mimeType: resolvedMime, data: cleanBase64 } });
       }
 
       const coaPromptList = accounts && Array.isArray(accounts)
@@ -411,9 +457,10 @@ app.post("/api/gemini/parse-sppd", async (req, res) => {
     const ai = getGeminiClient();
     const contents: any[] = [];
 
-    if (fileBase64 && mimeType) {
-      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
-      contents.push({ inlineData: { mimeType, data: cleanBase64 } });
+    if (fileBase64) {
+      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+      const resolvedMime = normalizeDocumentMimeType(cleanBase64, mimeType);
+      contents.push({ inlineData: { mimeType: resolvedMime, data: cleanBase64 } });
     }
 
     const coaPromptList = accounts && Array.isArray(accounts)
@@ -2811,12 +2858,13 @@ app.post("/api/parse-petty-cash", async (req, res) => {
     }
 
     const ai = getGeminiClient();
-    const defaultMime = mimeType || "application/pdf";
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+    const defaultMime = normalizeDocumentMimeType(cleanBase64, mimeType);
     
     const inlinePart = {
       inlineData: {
         mimeType: defaultMime,
-        data: fileBase64,
+        data: cleanBase64,
       },
     };
 
@@ -2858,10 +2906,11 @@ Return a strict JSON response conforming exactly to this structure:
     "workerName": "Budiono",
     "reportMonth": "Juni 2026"
   }
-}`,
+}
+`,
     };
 
-    console.log("Analyzing file: size =" + fileBase64.length + " bytes, type =" + defaultMime);
+    console.log("Analyzing file: size =" + cleanBase64.length + " bytes, type =" + defaultMime);
 
     const modelsToTry = PRIMARY_GEMINI_MODELS;
     let response = null;
@@ -2872,7 +2921,7 @@ Return a strict JSON response conforming exactly to this structure:
         console.log(`Attempting document analysis with model: ${modelName}`);
         response = await ai.models.generateContent({
           model: modelName,
-          contents: [inlinePart, textPart],
+          contents: { parts: [inlinePart, textPart] },
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -2957,12 +3006,13 @@ app.post("/api/parse-bank-statement", async (req, res) => {
     }
 
     const ai = getGeminiClient();
-    const defaultMime = mimeType || "application/pdf";
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+    const defaultMime = normalizeDocumentMimeType(cleanBase64, mimeType);
     
     const inlinePart = {
       inlineData: {
         mimeType: defaultMime,
-        data: fileBase64,
+        data: cleanBase64,
       },
     };
 
@@ -3023,7 +3073,7 @@ Return a strict JSON response conforming exactly to this structure:
         console.log(`Attempting bank statement analysis with model: ${modelName}`);
         response = await ai.models.generateContent({
           model: modelName,
-          contents: [inlinePart, textPart],
+          contents: { parts: [inlinePart, textPart] },
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -3409,9 +3459,9 @@ app.post("/api/sync-submissions", (req, res) => {
 });
 
 // GET /api/submissions/:id (Fetch single submission for public share-view / voucher)
-app.get("/api/submissions/:id", (req, res) => {
+app.get(["/api/submissions/:id", "/api/submissions/single"], (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params?.id || req.query?.id || req.query?.kode;
     const cleanId = String(id || "").toLowerCase().trim();
     const state = readState();
     const sub = (state.submissions || []).find((s: any) => 
@@ -4089,12 +4139,22 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
 
     const imageUrl = `${protocol}://${host}/api/share-image?${imgParams.toString()}`;
 
-    const indexPath = process.env.NODE_ENV === "production" 
+    const isDev = process.env.NODE_ENV !== "production" || !fs.existsSync(path.join(process.cwd(), "dist"));
+    const indexPath = !isDev
       ? path.join(process.cwd(), "dist", "index.html")
       : path.join(process.cwd(), "index.html");
 
     if (fs.existsSync(indexPath)) {
       let html = fs.readFileSync(indexPath, "utf-8");
+
+      // In dev mode, run Vite's HTML transformer so /@vite/client & React scripts are properly injected
+      if (isDev && viteInstance) {
+        try {
+          html = await viteInstance.transformIndexHtml(req.originalUrl, html);
+        } catch (vErr) {
+          console.warn("Vite transformIndexHtml warning:", vErr);
+        }
+      }
 
       // Inject / Replace Open Graph & Twitter meta tags
       const ogMetaTags = `
@@ -4130,10 +4190,12 @@ async function bootstrap() {
       server: { middlewareMode: true },
       appType: "spa",
     });
+    viteInstance = vite;
     app.use(vite.middlewares);
   } else {
     console.log("Starting production server...");
     const distPath = path.join(process.cwd(), "dist");
+    app.use("/assets", express.static(path.join(distPath, "assets")));
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
