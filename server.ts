@@ -19,8 +19,10 @@ import {
 dotenv.config();
 
 const app = express();
-// AI Studio requires the dev server to run on port 3000
-const PORT = 3000;
+// AI Studio dev runs on port 3000, while production environments (e.g. Railway) use process.env.PORT
+const PORT = process.env.NODE_ENV === "production" && process.env.PORT
+  ? parseInt(process.env.PORT, 10)
+  : 3000;
 
 // Global reference to Vite dev server instance for HTML transforms
 let viteInstance: any = null;

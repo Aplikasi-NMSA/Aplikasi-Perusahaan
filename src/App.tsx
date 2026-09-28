@@ -2650,8 +2650,8 @@ export default function App() {
   return (
     <div id="app-root" className={`min-h-screen bg-stone-50 text-stone-850 flex flex-col antialiased theme-${theme}`}>
       
-      {/* GLOBAL HEADER HEADER - Hidden on print */}
-      <header className="app-global-header bg-white border-b border-stone-200 fixed inset-x-0 top-0 z-[100] shadow-xs print:hidden">
+      {/* GLOBAL HEADER - Sticky at the top on scroll */}
+      <header className="app-global-header bg-white border-b border-stone-200 sticky top-0 z-50 shadow-xs print:hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between min-h-18 py-2 md:py-0">
             {/* Logo area */}
@@ -2733,7 +2733,7 @@ export default function App() {
 
                 {/* Dropdown Popover */}
                 {isToolsDropdownOpen && (
-                    <div className="app-header-dropdown fixed right-2 top-[calc(var(--app-header-height)+0.5rem)] w-[min(22rem,calc(100vw-1rem))] bg-white rounded-2xl shadow-xl border border-stone-200 z-[120] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
+                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[120] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
                     <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
                         Layanan &amp; Integrasi Cloud
@@ -3066,7 +3066,7 @@ export default function App() {
 
                 {/* User Dropdown Popover */}
                 {isUserMenuOpen && (
-                  <div className="app-header-dropdown fixed right-2 top-[calc(var(--app-header-height)+0.5rem)] w-[min(18rem,calc(100vw-1rem))] bg-white rounded-2xl shadow-xl border border-stone-200 z-[120] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans">
+                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(18rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[120] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans">
                     <div className="p-3.5 bg-stone-50 border-b border-stone-200">
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
@@ -3233,164 +3233,6 @@ export default function App() {
         </div>
       </div>
     </header>
-
-    {/* PRIMARY APPLICATION NAVIGATION BAR - RESPONSIVE FOR LAPTOP & ANDROID */}
-    <div className="h-[76px] sm:h-[80px] shrink-0 print:hidden" aria-hidden="true" />
-
-    {/* Legacy horizontal navigation is intentionally hidden; all modules remain in the gear menu. */}
-    <nav className="hidden" aria-hidden="true">
-      <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between gap-1 py-1.5 overflow-x-auto no-scrollbar scroll-smooth">
-          <div className="flex items-center gap-1 shrink-0">
-            {/* 1. Voucher HO */}
-            <button
-              type="button"
-              onClick={() => setView('list')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'list'
-                  ? 'bg-stone-900 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Database size={13} className={view === 'list' ? 'text-amber-400' : 'text-amber-600'} />
-              <span>Voucher HO</span>
-            </button>
-
-            {/* 2. Absen Harian */}
-            <button
-              type="button"
-              onClick={() => setView('absen')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'absen'
-                  ? 'bg-emerald-800 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Users size={13} className={view === 'absen' ? 'text-emerald-300' : 'text-emerald-600'} />
-              <span>Absensi Harian</span>
-            </button>
-
-            {/* 3. Pemetaan Akun */}
-            <button
-              type="button"
-              onClick={() => setView('accurate')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'accurate'
-                  ? 'bg-emerald-800 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Layers size={13} className={view === 'accurate' ? 'text-emerald-300' : 'text-emerald-700'} />
-              <span>Pemetaan Akun</span>
-            </button>
-
-            {/* 4. Master NPWP & Vendor */}
-            <button
-              type="button"
-              onClick={() => setView('npwp')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'npwp'
-                  ? 'bg-indigo-900 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Receipt size={13} className={view === 'npwp' ? 'text-indigo-300' : 'text-indigo-600'} />
-              <span>Master NPWP</span>
-            </button>
-
-            {/* 5. SPPD Dinas */}
-            <button
-              type="button"
-              onClick={() => setView('sppd')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'sppd'
-                  ? 'bg-amber-600 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Briefcase size={13} className={view === 'sppd' ? 'text-amber-200' : 'text-amber-600'} />
-              <span>SPPD Dinas</span>
-            </button>
-
-            {/* 6. Agenda & Pengingat */}
-            <button
-              type="button"
-              onClick={() => setView('agenda')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'agenda'
-                  ? 'bg-amber-600 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Calendar size={13} className={view === 'agenda' ? 'text-amber-200' : 'text-amber-600'} />
-              <span>Agenda</span>
-              {agendaDueCount > 0 && (
-                <span className="text-[9px] font-mono bg-rose-600 text-white px-1.5 py-0.2 rounded-full font-bold">
-                  {agendaDueCount}
-                </span>
-              )}
-            </button>
-
-            {/* 7. RAB Proyek */}
-            <button
-              type="button"
-              onClick={() => setView('rab')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'rab'
-                  ? 'bg-emerald-800 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Building2 size={13} className={view === 'rab' ? 'text-emerald-300' : 'text-emerald-600'} />
-              <span>RAB Proyek</span>
-            </button>
-
-            {/* 8. PPh 23 Coretax */}
-            <button
-              type="button"
-              onClick={() => setView('pph23')}
-              className={`hidden md:inline-flex px-3 py-1.5 rounded-xl text-xs font-bold transition items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'pph23'
-                  ? 'bg-amber-600 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <Receipt size={13} className={view === 'pph23' ? 'text-amber-200' : 'text-amber-600'} />
-              <span>PPh 23</span>
-            </button>
-
-            {/* 9. Buku Besar */}
-            <button
-              type="button"
-              onClick={() => setView('ledger')}
-              className={`hidden md:inline-flex px-3 py-1.5 rounded-xl text-xs font-bold transition items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
-                view === 'ledger'
-                  ? 'bg-amber-600 text-white shadow-xs font-black'
-                  : 'text-stone-700 hover:text-stone-950 hover:bg-stone-200/70'
-              }`}
-            >
-              <BookOpen size={13} className={view === 'ledger' ? 'text-amber-200' : 'text-amber-600'} />
-              <span>Buku Besar</span>
-            </button>
-          </div>
-
-          {/* Quick Action: New Voucher */}
-          <div className="shrink-0 pl-2">
-            <button
-              type="button"
-              onClick={() => {
-                setEditingSubmission(null);
-                setView('form');
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gold-dynamic hover:bg-gold-dynamic-hover text-stone-900 font-extrabold rounded-xl text-xs transition shadow-3xs cursor-pointer whitespace-nowrap"
-            >
-              <Plus size={13} />
-              <span className="hidden sm:inline">Input Baru</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </nav>
 
     {/* PERSISTENT REMINDER BANNER FOR DUE / OVERDUE AGENDA ITEMS */}
     <AgendaReminderBanner
