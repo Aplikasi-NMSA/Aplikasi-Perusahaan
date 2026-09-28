@@ -19,8 +19,8 @@ import {
 dotenv.config();
 
 const app = express();
-// Bind to 3000 in AI Studio or use PORT env var
-const PORT = parseInt(process.env.PORT || "3000", 10);
+// AI Studio requires the dev server to run on port 3000
+const PORT = 3000;
 
 // Global reference to Vite dev server instance for HTML transforms
 let viteInstance: any = null;
@@ -4249,11 +4249,29 @@ async function bootstrap() {
   if (isDev) {
     console.log("Starting dev server with Vite middleware...");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: "spa",
     });
     viteInstance = vite;
     app.use(vite.middlewares);
+
+    // Dev fallback for SPA navigation
+    app.use("*", async (req, res, next) => {
+      if (req.method !== "GET") return next();
+      const url = req.originalUrl;
+      try {
+        const indexPath = path.join(process.cwd(), "index.html");
+        let template = fs.readFileSync(indexPath, "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(template);
+      } catch (e: any) {
+        vite.ssrFixStacktrace?.(e);
+        next(e);
+      }
+    });
   } else {
     console.log("Starting production server...");
     const distPath = path.join(process.cwd(), "dist");
