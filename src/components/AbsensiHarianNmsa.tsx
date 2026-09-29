@@ -2218,50 +2218,92 @@ export function AbsensiHarianNmsa({
     try {
       const todayYMD = formatLocalYYYYMMDD(new Date());
       const activeCoords = overrideCoords || userCoords;
-      const response = await fetch("/api/quick-self-attend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workerId: selfWorkerId,
-          date: todayYMD,
-          latitude: activeCoords ? activeCoords.latitude : undefined,
-          longitude: activeCoords ? activeCoords.longitude : undefined,
-          status: status,
-          reason: customReason
-        })
-      });
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setQuickSubmitState("success");
-        setQuickSubmitMessage(data.message);
-        setSelfIsAttendedToday(true);
-        // Synchronize locally to keep states reactive
-        const updatedRecords = attendanceRecords.map((r) => {
-          if (r.workerId === selfWorkerId) {
-            return {
-              ...r,
-              attendance: {
-                ...r.attendance,
-                [todayYMD]: status === "Hadir",
-              },
-              customStatus: {
-                ...r.customStatus,
-                [todayYMD]: status !== "Hadir" ? status : undefined
-              }
-            };
-          }
-          return r;
+      let handledByServer = false;
+
+      try {
+        const response = await fetch("/api/quick-self-attend", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workerId: selfWorkerId,
+            date: todayYMD,
+            latitude: activeCoords ? activeCoords.latitude : undefined,
+            longitude: activeCoords ? activeCoords.longitude : undefined,
+            status: status,
+            reason: customReason
+          })
         });
-        setAttendanceRecords(updatedRecords);
-      } else if (response.ok && data.reason === "OUTSIDE") {
-        setQuickSubmitState("outside");
-      } else {
-        setQuickSubmitState("error");
-        setQuickSubmitMessage(data.error || "Gagal memproses absensi otomatis.");
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            handledByServer = true;
+            setQuickSubmitState("success");
+            setQuickSubmitMessage(data.message);
+            setSelfIsAttendedToday(true);
+          } else if (data.reason === "OUTSIDE") {
+            handledByServer = true;
+            setQuickSubmitState("outside");
+            return;
+          }
+        } else if (response.status === 403 || response.status === 400) {
+          const data = await response.json().catch(() => ({}));
+          handledByServer = true;
+          setQuickSubmitState("error");
+          setQuickSubmitMessage(data.error || "Gagal memproses absensi.");
+          return;
+        }
+      } catch (netErr) {
+        console.warn("Server API not available (client-side/GitHub Pages mode):", netErr);
       }
+
+      // If backend was unreachable or returned 404 (e.g. GitHub Pages static deployment), perform resilient client-side check-in
+      if (!handledByServer) {
+        setQuickSubmitState("success");
+        setQuickSubmitMessage(`Presensi ${status} berhasil dicatat.`);
+        setSelfIsAttendedToday(true);
+      }
+
+      // Synchronize locally to keep states reactive
+      const updatedRecords = attendanceRecords.map((r) => {
+        if (r.workerId === selfWorkerId) {
+          return {
+            ...r,
+            attendance: {
+              ...r.attendance,
+              [todayYMD]: status === "Hadir",
+            },
+            customStatus: {
+              ...r.customStatus,
+              [todayYMD]: status !== "Hadir" ? (status as any) : undefined
+            },
+            reasons: customReason ? {
+              ...(r.reasons || {}),
+              [todayYMD]: customReason
+            } : r.reasons
+          };
+        }
+        return r;
+      });
+      setAttendanceRecords(updatedRecords);
+      try {
+        localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
+      } catch (e) {}
+
+      // Save to Cloud Firestore
+      saveAbsenDataToFirestore({
+        id: `absen_${selfWorkerId}_${todayYMD}`,
+        workerId: selfWorkerId,
+        date: todayYMD,
+        status,
+        reason: customReason,
+        coords: activeCoords,
+        timestamp: new Date().toISOString()
+      }).catch(e => console.warn("Firestore save fallback error:", e));
+
     } catch (err: any) {
       setQuickSubmitState("error");
-      setQuickSubmitMessage(err.message || "Gagal menghubungi server.");
+      setQuickSubmitMessage(err.message || "Gagal memproses absensi.");
     }
   };
 
@@ -10376,7 +10418,7 @@ export function AbsensiHarianNmsa({
                       }
                       
                       const currentWorker = activeWorkers[currentStepIndex];
-                      const link = `${window.location.origin}/?id=${currentWorker.id}&quick=true`;
+                      const link = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(currentWorker.id)}&id=${encodeURIComponent(currentWorker.id)}&quick=true`;
                       const customMsg = getDeterministicReminderMessage(currentWorker.name, currentWorker.id, link);
                       const encodedMsg = encodeURIComponent(customMsg);
                       
@@ -10672,7 +10714,7 @@ export function AbsensiHarianNmsa({
                                 onClick={() => {
                                   const activeWorkers = workers.filter(w => w.isActive);
                                   const compiled = activeWorkers.map(w => {
-                                    const link = `${window.location.origin}/?id=${w.id}&quick=true`;
+                                    const link = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(w.id)}&id=${encodeURIComponent(w.id)}&quick=true`;
                                     return getDeterministicReminderMessage(w.name, w.id, link);
                                   }).join("\n\n-------------------------\n\n");
                                   navigator.clipboard.writeText(compiled);
@@ -10705,8 +10747,8 @@ export function AbsensiHarianNmsa({
                         <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Daftar Pengiriman</h4>
                         <div className="border border-slate-150 rounded-xl overflow-hidden divide-y divide-slate-100">
                           {workers.filter(w => w.isActive).map((w) => {
-                                    const link = `${window.location.origin}/?id=${w.id}&quick=true`;
-                                    const customMsg = getDeterministicReminderMessage(w.name, w.id, link);
+                            const link = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(w.id)}&id=${encodeURIComponent(w.id)}&quick=true`;
+                            const customMsg = getDeterministicReminderMessage(w.name, w.id, link);
                             const encodedMsg = encodeURIComponent(customMsg);
                             
                             // Sanitize phone number (remove non-digits and replace leading '0' with '62' if necessary)

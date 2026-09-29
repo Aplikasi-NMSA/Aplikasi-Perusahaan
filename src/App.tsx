@@ -789,7 +789,27 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const h = window.location.hash;
+      const p = window.location.pathname;
+      if (
+        sp.get('view') === 'absen' || 
+        sp.get('tab') === 'absen' || 
+        sp.has('quick') || 
+        sp.has('workerId') || 
+        p === '/absen' || 
+        p === '/absensi' || 
+        h.includes('absen')
+      ) {
+        return 'absen';
+      }
+      const saved = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW');
+      if (saved) return saved as any;
+    } catch (e) {}
+    return 'list';
+  });
 
   const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
 
@@ -2226,7 +2246,7 @@ export default function App() {
     setView('form');
   };
 
-  // 1. Check Public Share View Route before anything else (Highest Priority for Public Links)
+  // 1. Direct Absensi Harian NMSA (Highest Priority when worker opens attendance link from WhatsApp / Web)
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const rawIdParam = (searchParams.get('id') || '').toLowerCase().trim();
   const isSubmissionIdParam = 
@@ -2234,9 +2254,47 @@ export default function App() {
     rawIdParam.startsWith('tx-') || 
     rawIdParam.startsWith('vcr-') || 
     rawIdParam.startsWith('inv-') ||
-    rawIdParam.length > 10;
+    (rawIdParam.length > 10 && !rawIdParam.startsWith('w-') && !rawIdParam.startsWith('kar-') && !rawIdParam.startsWith('worker-'));
 
-  const isSharedViewRoute = Boolean(
+  const isAbsenRoute = Boolean(
+    currentPath === '/absen' || 
+    currentPath === '/absensi' || 
+    currentPath === '/absen-mandiri' ||
+    currentHash.includes('absen') || 
+    currentHash.includes('absensi') ||
+    searchParams.has('workerId') || 
+    searchParams.has('quick') || 
+    searchParams.get('view') === 'absen' || 
+    searchParams.get('tab') === 'absen' ||
+    (searchParams.has('id') && !isSubmissionIdParam && !searchParams.has('transaksi') && !searchParams.has('nominal') && !searchParams.has('kode'))
+  );
+
+  if (isAbsenRoute && (!authUser || searchParams.has('quick') || searchParams.has('workerId') || searchParams.get('view') === 'absen' || currentPath.includes('absen') || currentHash.includes('absen'))) {
+    return (
+      <div id="app-root" className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased theme-${theme}`}>
+        <AbsensiHarianNmsa
+          onClose={() => {
+            window.history.pushState({}, '', '/');
+            window.location.hash = '';
+            setCurrentPath('/');
+            setCurrentHash('');
+            setView('list');
+          }}
+          pettyCashHolders={pettyCashHolders}
+          onUpdatePettyCashHolders={setPettyCashHolders}
+          pettyCashReports={pettyCashReports}
+          onUpdatePettyCashReports={handleSavePettyCashReports}
+          submissions={submissions}
+          onPostToVoucherHO={(newSub) => {
+            handleSaveSubmission(newSub);
+          }}
+        />
+      </div>
+    );
+  }
+
+  // 2. Check Public Share View Route (Only for valid Voucher / Pengeluaran links)
+  const isSharedViewRoute = !isAbsenRoute && Boolean(
     currentHash.includes('shared-view') ||
     currentPath.includes('shared-view') ||
     currentPath.includes('/voucher') ||
@@ -2247,7 +2305,7 @@ export default function App() {
     searchParams.has('transaksi') ||
     searchParams.has('nominal') ||
     searchParams.has('kode') ||
-    searchParams.has('id')
+    (searchParams.has('id') && isSubmissionIdParam)
   );
 
   if (isSharedViewRoute) {
@@ -2366,44 +2424,6 @@ export default function App() {
             </div>
           )}
         </main>
-      </div>
-    );
-  }
-
-  // 2. Direct Absensi Harian NMSA (Only for valid worker attendance routes)
-  const isAbsenRoute = !isSharedViewRoute && Boolean(
-    currentPath === '/absen' || 
-    currentPath === '/absensi' || 
-    currentPath === '/absen-mandiri' ||
-    currentHash.includes('absen') || 
-    currentHash.includes('absensi') ||
-    searchParams.has('workerId') || 
-    searchParams.has('quick') || 
-    searchParams.get('view') === 'absen' || 
-    searchParams.get('tab') === 'absen' ||
-    (searchParams.has('id') && !isSubmissionIdParam && (currentPath.includes('absen') || currentHash.includes('absen')))
-  );
-
-  if (isAbsenRoute && !authUser) {
-    return (
-      <div id="app-root" className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased theme-${theme}`}>
-        <AbsensiHarianNmsa
-          onClose={() => {
-            window.history.pushState({}, '', '/');
-            window.location.hash = '';
-            setCurrentPath('/');
-            setCurrentHash('');
-            setView('list');
-          }}
-          pettyCashHolders={pettyCashHolders}
-          onUpdatePettyCashHolders={setPettyCashHolders}
-          pettyCashReports={pettyCashReports}
-          onUpdatePettyCashReports={handleSavePettyCashReports}
-          submissions={submissions}
-          onPostToVoucherHO={(newSub) => {
-            handleSaveSubmission(newSub);
-          }}
-        />
       </div>
     );
   }

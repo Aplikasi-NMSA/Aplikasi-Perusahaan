@@ -3819,8 +3819,8 @@ app.get("/api/cron-reminder", async (req, res) => {
         continue;
       }
 
-      // Generate instant check-in URL with quick=true
-      const loginUrl = `${hostOrigin}/?id=${worker.id}&quick=true`;
+      // Generate instant check-in URL with explicit view=absen and quick=true
+      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true`;
       
       // Select an energetic, highly varied personalized message template
       const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
