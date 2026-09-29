@@ -13,7 +13,10 @@ import {
   disconnectWhatsApp, 
   sendWhatsAppMessage, 
   requestWhatsAppPairingCode,
-  generateBusinessAiReply
+  generateBusinessAiReply,
+  recordKeepAlivePing,
+  getKeepAliveInfo,
+  hasAuthBackup
 } from "./server/wa-bot";
 import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator";
 
@@ -1609,10 +1612,6 @@ function validateAdminToken(req: express.Request): boolean {
 }
 
 // Server API Routes
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
-});
-
 // Admin Login endpoint
 app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
@@ -3089,6 +3088,69 @@ Return a strict JSON response conforming exactly to this structure:
   }
 });
 
+// --- UPTIMEROBOT & 24/7 KEEP-ALIVE HEALTH CHECK ENDPOINTS ---
+// Public keep-alive ping for UptimeRobot, Cron-Job.org, or any external monitor
+// Keeps Render / Railway / Replit instances awake 24/7 and auto-revives WhatsApp if idle
+app.all(["/api/health", "/api/ping", "/api/keepalive", "/health", "/ping"], (req, res) => {
+  const originInfo = {
+    ip: (req.headers["x-forwarded-for"] as string) || req.ip || req.socket.remoteAddress || "unknown",
+    userAgent: (req.headers["user-agent"] as string) || "UptimeRobot",
+    method: req.method,
+  };
+
+  const pingResult = recordKeepAlivePing(originInfo);
+  const waStatus = getWhatsAppStatus();
+  const hasCreds = fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup();
+  
+  let revived = false;
+  // If credentials exist but WhatsApp dropped or disconnected, revive it on ping!
+  if (hasCreds && waStatus.status === "disconnected") {
+    console.log("[Uptime Keep-Alive] Menerima ping dari pemantau 24/7, mengaktifkan kembali bot WhatsApp secara otomatis...");
+    initWhatsApp().catch((err) => console.error("Error auto-reviving WhatsApp on health ping:", err));
+    revived = true;
+  }
+
+  if (req.method === "HEAD") {
+    return res.status(200).end();
+  }
+
+  return res.status(200).json({
+    status: "ok",
+    service: "Sistem Terpadu & Bot WhatsApp PT NMSA",
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    keepAlive: {
+      totalPings: pingResult.totalPings,
+      lastPing: pingResult.lastPing,
+      autoReviveWhatsApp: true,
+      revivedThisPing: revived,
+    },
+    whatsapp: {
+      status: waStatus.status,
+      connectedUser: waStatus.user,
+      hasCredentials: hasCreds,
+      autoReconnect: "enabled",
+    },
+  });
+});
+
+// GET Keep-alive stats for frontend modal
+app.get("/api/wa/keepalive-stats", (req, res) => {
+  const info = getKeepAliveInfo();
+  const waStatus = getWhatsAppStatus();
+  const hasCreds = fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup();
+  res.json({
+    success: true,
+    ...info,
+    uptimeSeconds: Math.floor(process.uptime()),
+    whatsapp: {
+      status: waStatus.status,
+      user: waStatus.user,
+      hasCredentials: hasCreds,
+    }
+  });
+});
+
 // --- WHATSAPP BAILEYS BOT INTEGRATION ENDPOINTS ---
 
 // GET WhatsApp connection status
@@ -4226,9 +4288,10 @@ async function bootstrap() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server is running at http://localhost:${PORT}`);
-    // Boot up WhatsApp Bot service only if credentials exist
+    // Boot up WhatsApp Bot service if local credentials or session backup exists
     try {
-      if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json"))) {
+      if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
+        console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi, mengaktifkan bot...");
         initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
       }
     } catch (e) {

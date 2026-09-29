@@ -45,6 +45,8 @@ async function getDisconnectReason() {
 }
 
 const AUTH_DIR = path.join(process.cwd(), "auth_info_baileys");
+const BACKUP_FILE = path.join(process.cwd(), "wa_session_backup.json");
+const DATA_FILE = path.join(process.cwd(), "data-store.json");
 
 // Global state variables for WhatsApp Bot
 let sock: any = null;
@@ -53,7 +55,12 @@ let qrCodeDataUrl: string | null = null;
 let connectedUser: { id: string; name?: string } | null = null;
 let lastError: string | null = null;
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 3;
+let presenceKeepAliveTimer: NodeJS.Timeout | null = null;
+
+// Keep-Alive / UptimeRobot metrics
+let lastKeepAlivePing: string | null = null;
+let totalKeepAlivePings = 0;
+let recentPings: Array<{ timestamp: string; ip: string; userAgent: string; method: string }> = [];
 
 // Convert Indonesian/regular phone numbers to WhatsApp JID format
 export function formatToWaJid(phone: string): string {
@@ -70,19 +77,169 @@ export function formatToWaJid(phone: string): string {
   return cleaned;
 }
 
+// Helper to check if credentials or backup exist
+export function hasAuthBackup(): boolean {
+  if (fs.existsSync(BACKUP_FILE)) return true;
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed.waSessionBackup && parsed.waSessionBackup["creds.json"]) return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+// Backup all auth credentials files to persistent store (files & data-store.json)
+export function backupAuthStateToPersistentStore() {
+  try {
+    if (!fs.existsSync(AUTH_DIR)) return;
+    const credsFile = path.join(AUTH_DIR, "creds.json");
+    if (!fs.existsSync(credsFile)) return;
+
+    const files = fs.readdirSync(AUTH_DIR);
+    const bundle: Record<string, string> = {};
+    for (const f of files) {
+      const fullPath = path.join(AUTH_DIR, f);
+      if (fs.statSync(fullPath).isFile()) {
+        bundle[f] = fs.readFileSync(fullPath, "utf-8");
+      }
+    }
+
+    if (Object.keys(bundle).length > 0) {
+      // 1. Save to dedicated backup file
+      fs.writeFileSync(BACKUP_FILE, JSON.stringify(bundle), "utf-8");
+      
+      // 2. Also persist into data-store.json so it survives container restarts
+      if (fs.existsSync(DATA_FILE)) {
+        try {
+          const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+          ds.waSessionBackup = bundle;
+          fs.writeFileSync(DATA_FILE, JSON.stringify(ds, null, 2), "utf-8");
+        } catch (e) {}
+      }
+      console.log(`[WhatsApp Bot] Sesi WhatsApp berhasil dibackup secara persisten (${Object.keys(bundle).length} file).`);
+    }
+  } catch (err) {
+    console.error("[WhatsApp Bot] Gagal membackup status auth:", err);
+  }
+}
+
+// Restore auth credentials from persistent store if local directory was cleared
+export function restoreAuthStateFromPersistentStore(): boolean {
+  try {
+    const credsFile = path.join(AUTH_DIR, "creds.json");
+    if (fs.existsSync(credsFile)) {
+      return true; // Local folder already has creds
+    }
+
+    let bundle: Record<string, string> | null = null;
+    if (fs.existsSync(BACKUP_FILE)) {
+      try {
+        bundle = JSON.parse(fs.readFileSync(BACKUP_FILE, "utf-8"));
+      } catch (e) {}
+    }
+
+    if (!bundle && fs.existsSync(DATA_FILE)) {
+      try {
+        const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+        if (ds.waSessionBackup && typeof ds.waSessionBackup === "object" && ds.waSessionBackup["creds.json"]) {
+          bundle = ds.waSessionBackup;
+        }
+      } catch (e) {}
+    }
+
+    if (bundle && bundle["creds.json"]) {
+      if (!fs.existsSync(AUTH_DIR)) {
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      }
+      for (const [filename, content] of Object.entries(bundle)) {
+        fs.writeFileSync(path.join(AUTH_DIR, filename), content, "utf-8");
+      }
+      console.log(`[WhatsApp Bot] Berhasil memulihkan sesi WhatsApp (${Object.keys(bundle).length} file) dari penyimpanan persisten!`);
+      return true;
+    }
+  } catch (err) {
+    console.error("[WhatsApp Bot] Gagal memulihkan status auth:", err);
+  }
+  return false;
+}
+
+// Clear all auth backups when user explicitly clicks Disconnect / Logout
+export function clearAuthBackup() {
+  try {
+    if (fs.existsSync(BACKUP_FILE)) {
+      fs.unlinkSync(BACKUP_FILE);
+    }
+    if (fs.existsSync(DATA_FILE)) {
+      try {
+        const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+        delete ds.waSessionBackup;
+        fs.writeFileSync(DATA_FILE, JSON.stringify(ds, null, 2), "utf-8");
+      } catch (e) {}
+    }
+    console.log("[WhatsApp Bot] Semua backup sesi WhatsApp telah dibersihkan.");
+  } catch (err) {
+    console.error("[WhatsApp Bot] Gagal membersihkan backup auth:", err);
+  }
+}
+
+// Record Keep-Alive ping from UptimeRobot or health check
+export function recordKeepAlivePing(originInfo?: { ip?: string; userAgent?: string; method?: string }) {
+  totalKeepAlivePings++;
+  lastKeepAlivePing = new Date().toISOString();
+  
+  if (originInfo) {
+    recentPings.unshift({
+      timestamp: lastKeepAlivePing,
+      ip: originInfo.ip || "unknown",
+      userAgent: originInfo.userAgent || "UptimeRobot",
+      method: originInfo.method || "GET",
+    });
+    if (recentPings.length > 20) {
+      recentPings.pop();
+    }
+  }
+
+  return {
+    lastPing: lastKeepAlivePing,
+    totalPings: totalKeepAlivePings,
+    status: "active",
+  };
+}
+
+// Get Keep-Alive metrics for UI modal
+export function getKeepAliveInfo() {
+  return {
+    lastPing: lastKeepAlivePing,
+    totalPings: totalKeepAlivePings,
+    hasSessionBackup: hasAuthBackup(),
+    recentPings: recentPings.slice(0, 5),
+  };
+}
+
 // Check status helper
 export function getWhatsAppStatus() {
+  const hasLocalCreds = fs.existsSync(path.join(AUTH_DIR, "creds.json"));
+  const hasBackup = hasAuthBackup();
   return {
     status: connectionStatus,
     qr: qrCodeDataUrl,
     user: connectedUser,
-    error: lastError
+    error: lastError,
+    hasCredentials: hasLocalCreds || hasBackup,
+    hasBackup,
+    totalKeepAlivePings,
+    lastKeepAlivePing,
   };
 }
 
 // Initialize/Start WhatsApp connection
 export async function initWhatsApp() {
   try {
+    // Restore persistent session from backup if local folder is empty
+    restoreAuthStateFromPersistentStore();
+
     if (connectionStatus === "connected" && sock) {
       return sock;
     }
@@ -118,8 +275,15 @@ export async function initWhatsApp() {
       logger: pino({ level: "silent" }) as any,
     });
 
-    // Handle credential updates
-    sock.ev.on("creds.update", saveCreds);
+    // Handle credential updates & persist to backup store
+    sock.ev.on("creds.update", async () => {
+      try {
+        await saveCreds();
+        backupAuthStateToPersistentStore();
+      } catch (e) {
+        console.warn("Error updating WhatsApp creds:", e);
+      }
+    });
 
     // Handle incoming message replies from workers
     sock.ev.on("messages.upsert", async (m: any) => {
@@ -439,35 +603,55 @@ _Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, s
         connectionStatus = "connected";
         qrCodeDataUrl = null;
         reconnectAttempts = 0;
+        lastError = null;
         const user = sock?.user;
         connectedUser = user ? { id: user.id, name: user.name || "Admin WhatsApp" } : { id: "unknown" };
-        console.log("WhatsApp connection successfully opened for", connectedUser);
+        console.log("[WhatsApp Bot] WhatsApp connection successfully opened for", connectedUser);
+
+        // Backup session files immediately upon successful connection
+        backupAuthStateToPersistentStore();
+
+        // Start presence keep-alive loop (send presence update every 45s)
+        if (presenceKeepAliveTimer) clearInterval(presenceKeepAliveTimer);
+        presenceKeepAliveTimer = setInterval(() => {
+          if (sock && connectionStatus === "connected") {
+            try {
+              sock.sendPresenceUpdate?.("available").catch(() => {});
+            } catch (e) {}
+          }
+        }, 45000);
       }
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const DisconnectReason = await getDisconnectReason();
-        const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
+        const isLoggedOut = statusCode === DisconnectReason?.loggedOut;
+        const shouldReconnect = !isLoggedOut;
         
-        console.log(`WhatsApp connection closed. Status Code: ${statusCode}, Reconnecting: ${shouldReconnect}, Attempt: ${reconnectAttempts}`);
+        console.log(`[WhatsApp Bot] Connection closed. StatusCode: ${statusCode}, Should Reconnect: ${shouldReconnect}, Attempts: ${reconnectAttempts}`);
         
         connectedUser = null;
         qrCodeDataUrl = null;
 
-        if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        if (presenceKeepAliveTimer) {
+          clearInterval(presenceKeepAliveTimer);
+          presenceKeepAliveTimer = null;
+        }
+
+        if (shouldReconnect) {
           reconnectAttempts++;
           connectionStatus = "connecting";
+          // Resilient progressive backoff: 3s, 5s, 8s, up to max 25s
+          const delay = Math.min(25000, 2000 + Math.min(reconnectAttempts, 8) * 2500);
+          console.log(`[WhatsApp Bot] Auto-reconnecting in ${Math.round(delay / 1000)}s (Percobaan #${reconnectAttempts})...`);
           setTimeout(() => {
-            initWhatsApp();
-          }, 5000);
+            initWhatsApp().catch((err) => console.error("Error in auto-reconnecting WhatsApp:", err));
+          }, delay);
         } else {
           connectionStatus = "disconnected";
-          if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            lastError = "Koneksi WhatsApp terputus (mencapai batas percobaan). Silakan scan ulang QR Code.";
-          } else {
-            lastError = "Logged out of WhatsApp. Please scan QR Code again.";
-            cleanupAuthFolder();
-          }
+          lastError = "Sesi WhatsApp telah dikeluarkan (logged out) dari perangkat HP. Silakan scan ulang QR Code.";
+          cleanupAuthFolder();
+          clearAuthBackup();
           reconnectAttempts = 0;
         }
       }
@@ -512,6 +696,7 @@ export async function disconnectWhatsApp() {
     
     connectionStatus = "disconnected";
     cleanupAuthFolder();
+    clearAuthBackup();
     
     // Trigger a fresh connection after 2 seconds to regenerate a clean QR code
     setTimeout(() => {
