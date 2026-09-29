@@ -1726,6 +1726,13 @@ export const executeDriveApiWithAutoRefresh = async <T>(
       token = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN') || '';
     }
 
+    if (!token || token.trim() === '') {
+      throw new Error(
+        'Akun Google Drive belum terhubung atau sesi login telah berakhir. ' +
+        'Silakan buka menu pengaturan Google Drive dan klik "Hubungkan Akun Google Drive" terlebih dahulu.'
+      );
+    }
+
     try {
       const result = await action(token);
 
@@ -1996,6 +2003,19 @@ export const googleDriveLogin = async (
 
     return { user: result.user, accessToken: credential.accessToken, driveDetails };
   } catch (error: any) {
+    if (error?.code === 'auth/unauthorized-domain' || String(error?.message).includes('unauthorized-domain')) {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'aplikasi-perusahaan.onrender.com';
+      console.warn(`[Firebase Auth] Domain '${currentHost}' belum terdaftar di Authorized Domains.`);
+      throw new Error(
+        `Domain aplikasi ini (${currentHost}) belum didaftarkan di Firebase Authentication Authorized Domains.\n\n` +
+        `Langkah mengatasinya:\n` +
+        `1. Buka Firebase Console (https://console.firebase.google.com/)\n` +
+        `2. Pilih project: pencatatan-voucher-perusahaan\n` +
+        `3. Masuk ke menu: Authentication -> Settings -> tab "Authorized domains"\n` +
+        `4. Klik tombol "Add domain" lalu masukkan: ${currentHost}\n` +
+        `5. Klik Save / Simpan, kemudian coba klik Hubungkan Akun Google Drive kembali.`
+      );
+    }
     if (error?.code === 'auth/popup-blocked' || String(error?.message).includes('popup-blocked')) {
       console.warn('Google Auth popup was blocked by browser. User interaction required.');
       throw new Error('Jendela pop-up login Google diblokir oleh browser. Silakan izinkan pop-up (Pop-ups Allowed) di pengaturan browser Anda lalu klik Hubungkan Akun kembali.');

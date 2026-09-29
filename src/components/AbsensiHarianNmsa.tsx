@@ -86,6 +86,7 @@ import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from ".
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
 import { SelfSigningPortal } from "./SelfSigningPortal";
+import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
 
 // Utility to format Date as local YYYY-MM-DD
 function formatLocalYYYYMMDD(date: Date): string {
@@ -145,89 +146,9 @@ function parseYearAndMonthFromPeriod(periodText: string): { targetYear: string; 
   return { targetYear, targetMonth };
 }
 
-// High-energy, vibrant Indonesian greetings (24 variations for dynamic per-person & daily diversity)
-const FRONTEND_ENERGETIC_GREETINGS = [
-  (name: string) => `Semangat pagi pejuang tangguh *${name}*! ☀️🔥 Awali hari dengan rasa syukur dan tekad meraih prestasi terbaik!`,
-  (name: string) => `Bismillah, salam sukses luar biasa untuk *${name}*! 🚀 Jadikan setiap langkah kerja hari ini penuh berkah dan keberhasilan!`,
-  (name: string) => `Selamat pagi rekan hebat *${name}*! 🌟 Pagi yang cerah, energi baru, siap mengukir karya terbaik hari ini!`,
-  (name: string) => `Semangat membara untuk sahabat pekerja keras *${name}*! 💪✨ Senyummu dan dedikasimu selalu membawa inspirasi positif!`,
-  (name: string) => `Salam penuh optimisme, pejuang andalan *${name}*! ☕🌈 Hari ini adalah kesempatan emas untuk membuktikan potensi terbaikmu!`,
-  (name: string) => `Halo sang juara *${name}*! 🏆 Mari sambut pagi ini dengan senyuman hangat dan semangat yang menyala-nyala!`,
-  (name: string) => `Selamat pagi pahlawan operasional *${name}*! 🏢⚡ Semoga setiap ikhtiar dan keringatmu berbuah hasil yang membanggakan!`,
-  (name: string) => `Pagi penuh berkah untuk saudaraku *${name}*! 🌺 Awali hari dengan niat lurus, energi positif, dan fokus pada target gemilang!`,
-  (name: string) => `Semangat pagi tanpa batas untuk *${name}*! 🎯 Kesuksesan besar selalu berawal dari disiplin dan langkah mantap setiap pagi!`,
-  (name: string) => `Salam semangat membahana, rekan tangguh *${name}*! 💎 Jangan ragu, hari ini pintu-pintu rezeki dan peluang terbuka lebar!`,
-  (name: string) => `Selamat pagi insan berdedikasi tinggi *${name}*! 👔🌟 Bersama kita kuat, mari kita tuntaskan tugas kerja dengan penuh integritas!`,
-  (name: string) => `Halo bintang lapangan andalan *${name}*! 🌠 Kerja cerdas, kerja ikhlas, dan keberkahan selalu menyertai setiap langkahmu!`,
-  (name: string) => `Selamat pagi sahabat terbaik *${name}*! 🌤️ Mantapkan niat, jaga kesehatan, dan mari kita torehkan prestasi terbaik hari ini!`,
-  (name: string) => `Semangat pagi pejuang rezeki halal *${name}*! 🤲💖 Setiap tetes peluh perjuanganmu bernilai pahala dan kehormatan tinggi!`,
-  (name: string) => `Salam hangat dan penuh energi positif untuk *${name}*! ⚡ Mari melangkah mantap, hari ini akan menjadi hari yang luar biasa produktif!`,
-  (name: string) => `Selamat pagi mitra kerja terpercaya *${name}*! 🤝✨ Semangat baru, harapan baru, mari taklukkan tantangan hari ini bersama-sama!`,
-  (name: string) => `Pagi cerah penuh harapan untuk rekan andalan *${name}*! 🌻 Jadikan hari ini lebih baik dari kemarin dengan dedikasi terbaikmu!`,
-  (name: string) => `Semangat pagi pejuang PT NMSA *${name}*! 🏗️🔥 Teruslah melangkah dengan bangga, kontribusimu sangat berarti bagi kemajuan bersama!`,
-  (name: string) => `Salam keberkahan pagi untuk *${name}*! 🌿 Semoga kelancaran, keselamatan, dan kebahagiaan menyertai seluruh aktivitasmu hari ini!`,
-  (name: string) => `Halo rekan tangguh berhati mulia *${name}*! 🥇 Pagi yang indah untuk memulai langkah dengan penuh percaya diri dan senyuman!`,
-  (name: string) => `Semangat pagi tiada tara untuk *${name}*! 🚀 Mari awali hari dengan komitmen tinggi dan semangat saling mendukung!`,
-  (name: string) => `Selamat pagi pejuang masa depan cerah *${name}*! ☀️🛡️ Selalu utamakan keselamatan kerja dan selesaikan tugas dengan rasa bangga!`,
-  (name: string) => `Salam sukses penuh inspirasi untuk rekan hebat *${name}*! 💼🌟 Hari ini adalah lembaran baru untuk mengukir cerita sukses!`,
-  (name: string) => `Semangat pagi membakar jiwa untuk *${name}*! ⚡ Mari kita jadikan hari ini penuh makna, prestasi, dan rezeki yang melimpah ruah!`
-];
-
-// Diverse, energetic Calls-to-Action (12 variations)
-const FRONTEND_ENERGETIC_CALL_TO_ACTIONS = [
-  "Yuk amankan pencatatan uang makan harianmu sekarang juga! Cukup klik tautan cepat berikut:",
-  "Satu sentuhan link di bawah ini adalah tanda kehadiran dan bukti disiplin hebatmu hari ini:",
-  "Jangan tunda lagi ya, luangkan waktu 5 detik untuk konfirmasi kehadiran melalui tautan kilat ini:",
-  "Segera catat presensi mandirimu agar uang makan tercatat sempurna di sistem keuangan, klik di sini ya:",
-  "Mari awali jam kerja dengan presensi! Langsung ketuk tautan absen instan di bawah ini:",
-  "Agar hak uang makan harianmu aman dan terdata rapi oleh bagian admin, yuk klik link ini:",
-  "Cukup satu klik mudah untuk verifikasi absensi mandirimu hari ini, silakan akses link berikut:",
-  "Yuk check-in sekarang juga sebelum batas waktu absensi ditutup, langsung sentuh link resmi di bawah:",
-  "Demi kelancaran rekapitulasi harian dan uang makanmu, silakan konfirmasi kehadiran via tautan cepat ini:",
-  "Jangan sampai terlewat ya rekan hebat, verifikasi kehadiran fisikmu dengan mengetuk tautan berikut:",
-  "Amankan presensi kehadiranmu pagi ini dengan sangat mudah, silakan klik link instan di bawah:",
-  "Satu klik untuk mengawali hari kerja yang tertib dan profesional, yuk klik tautan berikut:"
-];
-
-// Warm, motivating closing blessings (8 variations)
-const FRONTEND_ENERGETIC_CLOSINGS = [
-  "Selamat bertugas, jaga kesehatan, dan utamakan selalu keselamatan kerja! Semangat luar biasa! 💼✨🛡️",
-  "Semoga hari ini penuh berkah, urusan dipermudah, dan rezeki mengalir lancar! Aamiin. 🤲🌟",
-  "Tetap fokus, jaga kekompakan tim, dan mari kita capai hasil terbaik hari ini! Sukses selalu! 🏆💪",
-  "Jaga stamina tubuh dan selalu tersenyum sepanjang hari. Selamat berkarya rekan hebat! 😄🏢",
-  "Doa kami menyertai langkah kerjamu hari ini. Semoga senantiasa aman, sehat, dan penuh berkah! 🌿🤝",
-  "Bekerjalah dengan hati gembira dan penuh integritas. Hari ini pasti hari yang menyenangkan! 🌤️❤️",
-  "Utamakan kesehatan dan keselamatan di lingkungan kerja. Selamat beraktivitas dan salam sukses! 🛡️⚡",
-  "Keluarga menanti di rumah dengan bangga. Selamat bekerja dengan aman dan penuh semangat! 👨‍👩‍👧‍👦✨"
-];
-
+// Dynamic, multi-format WhatsApp Attendance Reminder Generator (24 Distinct Layouts, Day-of-Week & Time-of-Day Aware)
 function getDeterministicReminderMessage(name: string, workerId: string, url: string): string {
-  // Use today's date so it changes daily but stays consistent for the employee on that day
-  const todayStr = new Date().toLocaleDateString("id-ID", { year: "numeric", month: "numeric", day: "numeric" });
-  const seedStr = `${workerId || name}_${name}_${todayStr}`;
-  let hash = 0;
-  for (let i = 0; i < seedStr.length; i++) {
-    hash = (hash << 5) - hash + seedStr.charCodeAt(i);
-    hash |= 0;
-  }
-  const absHash = Math.abs(hash);
-
-  const greetingIndex = absHash % FRONTEND_ENERGETIC_GREETINGS.length;
-  const ctaIndex = Math.floor(absHash / FRONTEND_ENERGETIC_GREETINGS.length) % FRONTEND_ENERGETIC_CALL_TO_ACTIONS.length;
-  const closingIndex = (absHash + 7) % FRONTEND_ENERGETIC_CLOSINGS.length;
-
-  const greeting = FRONTEND_ENERGETIC_GREETINGS[greetingIndex](name);
-  const cta = FRONTEND_ENERGETIC_CALL_TO_ACTIONS[ctaIndex];
-  const closing = FRONTEND_ENERGETIC_CLOSINGS[closingIndex];
-
-  return `${greeting}
-
-${cta}
-👉 ${url}
-
-📍 *Ketentuan Presensi:* Absensi uang makan ini mendeteksi titik koordinat GPS secara otomatis dan hanya sah dilakukan langsung di area kantor Wisma NH Pasar Minggu. Jika sedang dinas luar atau meeting eksternal, presensi mandiri tidak berlaku.
-
-${closing}`;
+  return getDynamicReminderMessage(name, workerId, url);
 }
 
 // Helper to sort transactions putting "Saldo Awal" at the very top, and then the rest by date ascending
@@ -9550,7 +9471,7 @@ export function AbsensiHarianNmsa({
                                 <button
                                   type="button"
                                   onClick={async () => {
-                                    const quickUrl = `${window.location.origin}/?id=${worker.id}&quick=true`;
+                                    const quickUrl = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true`;
                                     const customMsg = getDeterministicReminderMessage(worker.name, worker.id, quickUrl);
                                     setSendingBotMsgId(worker.id);
                                     try {
@@ -9589,7 +9510,7 @@ export function AbsensiHarianNmsa({
 
                                 {(() => {
                                   const isSentToday = !!bulkSentStatus[worker.id];
-                                  const quickUrl = `${window.location.origin}/?id=${worker.id}&quick=true`;
+                                  const quickUrl = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true`;
                                   const customMsg = getDeterministicReminderMessage(worker.name, worker.id, quickUrl);
                                   const encodedMsg = encodeURIComponent(customMsg);
                                   let phoneClean = worker.phoneNumber?.replace(/[^0-9]/g, "") || "";
