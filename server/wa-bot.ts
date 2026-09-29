@@ -52,6 +52,8 @@ let connectionStatus: "disconnected" | "connecting" | "connected" | "qr" = "disc
 let qrCodeDataUrl: string | null = null;
 let connectedUser: { id: string; name?: string } | null = null;
 let lastError: string | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 3;
 
 // Convert Indonesian/regular phone numbers to WhatsApp JID format
 export function formatToWaJid(phone: string): string {
@@ -436,6 +438,7 @@ _Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, s
       if (connection === "open") {
         connectionStatus = "connected";
         qrCodeDataUrl = null;
+        reconnectAttempts = 0;
         const user = sock?.user;
         connectedUser = user ? { id: user.id, name: user.name || "Admin WhatsApp" } : { id: "unknown" };
         console.log("WhatsApp connection successfully opened for", connectedUser);
@@ -446,20 +449,26 @@ _Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, s
         const DisconnectReason = await getDisconnectReason();
         const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
         
-        console.log(`WhatsApp connection closed. Status Code: ${statusCode}, Reconnecting: ${shouldReconnect}`);
+        console.log(`WhatsApp connection closed. Status Code: ${statusCode}, Reconnecting: ${shouldReconnect}, Attempt: ${reconnectAttempts}`);
         
         connectedUser = null;
         qrCodeDataUrl = null;
 
-        if (shouldReconnect) {
+        if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
           connectionStatus = "connecting";
           setTimeout(() => {
             initWhatsApp();
           }, 5000);
         } else {
           connectionStatus = "disconnected";
-          lastError = "Logged out of WhatsApp. Please scan QR Code again.";
-          cleanupAuthFolder();
+          if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            lastError = "Koneksi WhatsApp terputus (mencapai batas percobaan). Silakan scan ulang QR Code.";
+          } else {
+            lastError = "Logged out of WhatsApp. Please scan QR Code again.";
+            cleanupAuthFolder();
+          }
+          reconnectAttempts = 0;
         }
       }
     });

@@ -4286,8 +4286,14 @@ async function bootstrap() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server is running at http://localhost:${PORT}`);
-    // Boot up WhatsApp Bot service
-    initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+    // Boot up WhatsApp Bot service only if credentials exist
+    try {
+      if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json"))) {
+        initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+      }
+    } catch (e) {
+      console.warn("Could not check WhatsApp credentials on startup:", e);
+    }
   });
 }
 
