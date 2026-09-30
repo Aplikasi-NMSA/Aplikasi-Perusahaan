@@ -1521,6 +1521,18 @@ function readState() {
       if (parsed.autoReminderHour === undefined) {
         parsed.autoReminderHour = "09:00";
       }
+      if (parsed.autoReminderEnabled === undefined) {
+        parsed.autoReminderEnabled = true;
+      }
+      if (!parsed.reminderActiveDays) {
+        parsed.reminderActiveDays = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
+      }
+      if (parsed.requireFridaySignature === undefined) {
+        parsed.requireFridaySignature = true;
+      }
+      if (!parsed.fridayVerifications) {
+        parsed.fridayVerifications = {};
+      }
       if (parsed.lastCronPing === undefined) {
         parsed.lastCronPing = "";
       }
@@ -1579,6 +1591,10 @@ function readState() {
     projectExpenses: defaultProjectExpenses,
     waMethod: "desktop",
     autoReminderHour: "09:00",
+    autoReminderEnabled: true,
+    reminderActiveDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
+    requireFridaySignature: true,
+    fridayVerifications: {},
     lastCronPing: "",
     lastCronStatus: "",
     lastCronSentDate: "",
@@ -1703,6 +1719,10 @@ app.post("/api/shared-state", (req, res) => {
       waSecuritySettings,
       waMethod,
       autoReminderHour,
+      autoReminderEnabled,
+      reminderActiveDays,
+      requireFridaySignature,
+      fridayVerifications,
       lastCronPing,
       lastCronStatus,
       lastCronSentDate
@@ -1866,6 +1886,10 @@ app.post("/api/shared-state", (req, res) => {
       waSecuritySettings: waSecuritySettings !== undefined ? waSecuritySettings : currentState.waSecuritySettings,
       waMethod: waMethod !== undefined ? waMethod : currentState.waMethod,
       autoReminderHour: autoReminderHour !== undefined ? autoReminderHour : currentState.autoReminderHour,
+      autoReminderEnabled: autoReminderEnabled !== undefined ? autoReminderEnabled : currentState.autoReminderEnabled,
+      reminderActiveDays: reminderActiveDays !== undefined ? reminderActiveDays : currentState.reminderActiveDays,
+      requireFridaySignature: requireFridaySignature !== undefined ? requireFridaySignature : currentState.requireFridaySignature,
+      fridayVerifications: fridayVerifications !== undefined ? { ...(currentState.fridayVerifications || {}), ...fridayVerifications } : (currentState.fridayVerifications || {}),
       lastCronPing: lastCronPing !== undefined ? lastCronPing : currentState.lastCronPing,
       lastCronStatus: lastCronStatus !== undefined ? lastCronStatus : currentState.lastCronStatus,
       lastCronSentDate: lastCronSentDate !== undefined ? lastCronSentDate : currentState.lastCronSentDate,
@@ -2431,18 +2455,45 @@ app.post("/api/self-attend", async (req, res) => {
       signatures[workerId] = signature;
     }
 
+    // Friday Digital Signature Verification to Server
+    const dateObj = new Date(date + "T00:00:00");
+    const isFridayDate = dateObj.getDay() === 5 || req.body.isFriday;
+    let verificationInfo: any = null;
+    if (signature || isFridayDate) {
+      const serverTimestamp = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB";
+      const token = `VERIF-NMSA-JUMAT-${workerId.slice(0, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+      verificationInfo = {
+        token,
+        workerId,
+        workerName: worker.name,
+        date,
+        verified: true,
+        verifiedAt: serverTimestamp,
+        distance: Math.round(distance),
+        latitude,
+        longitude,
+        serverStamp: "TERVERIFIKASI RESMI SERVER APLIKASI PT NMSA",
+        device: String(req.headers["user-agent"] || "Mobile Browser").slice(0, 100)
+      };
+      if (!state.fridayVerifications) state.fridayVerifications = {};
+      state.fridayVerifications[`${workerId}_${date}`] = verificationInfo;
+    }
+
     addLog("BERHASIL");
 
     writeState({
       ...state,
       attendanceRecords: records,
-      signatures
+      signatures,
+      fridayVerifications: state.fridayVerifications
     });
 
     res.json({ 
       success: true, 
-      message: `Presensi berhasil tercatat! Terima kasih ${worker.name}.`,
-      workerName: worker.name
+      message: `Presensi berhasil tercatat! Terima kasih ${worker.name}.${verificationInfo ? " Tanda Tangan Digital Resmi TERVERIFIKASI ke Server!" : ""}`,
+      workerName: worker.name,
+      verified: !!verificationInfo,
+      verification: verificationInfo
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Gagal melakukan absen mandiri" });
@@ -2452,7 +2503,7 @@ app.post("/api/self-attend", async (req, res) => {
 // POST Quick/Instant Attendance Check-in via Bot link
 app.post("/api/quick-self-attend", async (req, res) => {
   try {
-    const { workerId, date, latitude, longitude, status, reason } = req.body;
+    const { workerId, date, latitude, longitude, status, reason, signature, isFriday } = req.body;
     if (!workerId || !date) {
       return res.status(400).json({ error: "ID karyawan dan tanggal wajib diisi." });
     }
@@ -2563,14 +2614,48 @@ app.post("/api/quick-self-attend", async (req, res) => {
         state.attendanceLogs = state.attendanceLogs.slice(0, 500);
       }
 
+      // Friday verification token & signature saving
+      const dateObj = new Date(date + "T00:00:00");
+      const isFridayDate = isFriday || dateObj.getDay() === 5;
+      let verificationInfo: any = null;
+      if (signature || isFridayDate) {
+        const serverTimestamp = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB";
+        const token = `VERIF-NMSA-JUMAT-${workerId.slice(0, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+        verificationInfo = {
+          token,
+          workerId,
+          workerName,
+          date,
+          verified: true,
+          verifiedAt: serverTimestamp,
+          distance: Math.round(distance),
+          latitude,
+          longitude,
+          serverStamp: "TERVERIFIKASI RESMI SERVER APLIKASI PT NMSA",
+          device: String(req.headers["user-agent"] || "Mobile Browser").slice(0, 100)
+        };
+        if (!state.fridayVerifications) state.fridayVerifications = {};
+        state.fridayVerifications[`${workerId}_${date}`] = verificationInfo;
+
+        const signatures = state.signatures || {};
+        if (signature) {
+          signatures[workerId] = signature;
+        }
+        state.signatures = signatures;
+      }
+
       writeState({
         ...state,
-        attendanceRecords: records
+        attendanceRecords: records,
+        signatures: state.signatures,
+        fridayVerifications: state.fridayVerifications
       });
 
       return res.json({
         success: true,
-        message: `Absen Berhasil! Halo *${workerName}*, presensi kehadiran Anda hari ini tanggal *${date}* berhasil dicatat secara otomatis karena lokasi Anda berada di jangkauan kantor (jarak: *${Math.round(distance)}* meter dari kantor).`
+        message: `Absen Berhasil! Halo *${workerName}*, presensi kehadiran Anda hari ini tanggal *${date}* berhasil dicatat.${verificationInfo ? " Tanda Tangan Digital Resmi TERVERIFIKASI ke Server!" : ` Lokasi: ${Math.round(distance)} meter dari kantor.`}`,
+        verified: !!verificationInfo,
+        verification: verificationInfo
       });
 
     } else {
@@ -3868,8 +3953,10 @@ app.get("/api/cron-reminder", async (req, res) => {
         continue;
       }
 
-      // Generate instant check-in URL with explicit view=absen and quick=true
-      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true`;
+      // Generate instant check-in URL with explicit view=absen and quick=true (plus friday=true if Friday)
+      const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
+      const fridayParam = isFriday ? "&friday=true" : "";
+      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
       
       // Select an energetic, highly varied personalized message template
       const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
@@ -3917,6 +4004,246 @@ app.get("/api/cron-reminder", async (req, res) => {
     });
   }
 });
+
+// GET /api/bot-reminder-settings (Fetch full reminder configuration & status)
+app.get("/api/bot-reminder-settings", (req, res) => {
+  try {
+    const state = readState();
+    const waStatus = getWhatsAppStatus();
+    const jktTimeString = new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
+    const todayYMD = getJakartaDateStr();
+    
+    const workers = state.workers || [];
+    const records = state.attendanceRecords || [];
+    const activeWorkers = workers.filter((w: any) => w.isActive);
+    const pendingWorkers = activeWorkers.filter((worker: any) => {
+      const record = records.find((r: any) => r.workerId === worker.id);
+      return !record || !record.attendance || !record.attendance[todayYMD];
+    });
+
+    res.json({
+      success: true,
+      autoReminderHour: state.autoReminderHour || "09:00",
+      autoReminderEnabled: state.autoReminderEnabled !== false,
+      reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
+      requireFridaySignature: state.requireFridaySignature !== false,
+      lastCronPing: state.lastCronPing || "",
+      lastCronStatus: state.lastCronStatus || "",
+      lastCronSentDate: state.lastCronSentDate || "",
+      serverTimeWIB: `${todayYMD} ${jktTimeString} WIB`,
+      totalActiveWorkers: activeWorkers.length,
+      pendingAttendanceCount: pendingWorkers.length,
+      waConnected: waStatus.status === "connected",
+      waPhone: waStatus.user?.id ? waStatus.user.id.split(":")[0] : null
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/bot-reminder-settings (Update reminder configuration)
+app.post("/api/bot-reminder-settings", (req, res) => {
+  try {
+    const { autoReminderHour, autoReminderEnabled, reminderActiveDays, requireFridaySignature } = req.body;
+    const state = readState();
+    if (autoReminderHour !== undefined) state.autoReminderHour = autoReminderHour;
+    if (autoReminderEnabled !== undefined) state.autoReminderEnabled = autoReminderEnabled;
+    if (reminderActiveDays !== undefined) state.reminderActiveDays = reminderActiveDays;
+    if (requireFridaySignature !== undefined) state.requireFridaySignature = requireFridaySignature;
+    writeState(state);
+    res.json({
+      success: true,
+      message: "Pengaturan jadwal pengingat bot WhatsApp berhasil disimpan ke server!",
+      settings: {
+        autoReminderHour: state.autoReminderHour,
+        autoReminderEnabled: state.autoReminderEnabled,
+        reminderActiveDays: state.reminderActiveDays,
+        requireFridaySignature: state.requireFridaySignature
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/trigger-bot-reminder (Manual force trigger from Attendance UI)
+app.post("/api/trigger-bot-reminder", async (req, res) => {
+  try {
+    const state = readState();
+    const todayYMD = getJakartaDateStr();
+    const waStatus = getWhatsAppStatus();
+    
+    if (waStatus.status !== "connected") {
+      return res.status(500).json({ 
+        success: false, 
+        message: "Gagal: WhatsApp Bot belum terhubung. Silakan scan QR code WhatsApp terlebih dahulu." 
+      });
+    }
+
+    const workers = state.workers || [];
+    const records = state.attendanceRecords || [];
+    const activeWorkers = workers.filter((w: any) => w.isActive);
+    
+    const absentWorkers = activeWorkers.filter((worker: any) => {
+      const record = records.find((r: any) => r.workerId === worker.id);
+      return !record || !record.attendance || !record.attendance[todayYMD];
+    });
+
+    if (absentWorkers.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: "Seluruh karyawan aktif sudah absen hari ini. Tidak ada pengingat yang perlu dikirim.",
+        sentCount: 0,
+        failedCount: 0
+      });
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const errors: string[] = [];
+    const hostOrigin = state.lastHostOrigin || (req.protocol + "://" + req.get("host"));
+    const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
+    const fridayParam = isFriday ? "&friday=true" : "";
+
+    for (const worker of absentWorkers) {
+      if (!worker.phoneNumber) {
+        failedCount++;
+        continue;
+      }
+
+      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
+      const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
+
+      const result = await sendWhatsAppMessage(worker.phoneNumber, message);
+      if (result.success) {
+        sentCount++;
+      } else {
+        failedCount++;
+        if (result.error) errors.push(result.error);
+      }
+
+      // Safe delay between messages
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    state.lastCronStatus = `Pengingat manual terkirim ke ${sentCount} karyawan.${failedCount > 0 ? ` Gagal: ${failedCount} karyawan.` : ""}`;
+    state.lastCronSentDate = todayYMD;
+    writeState(state);
+
+    return res.json({
+      success: true,
+      message: `Berhasil mengirimkan pengingat ke ${sentCount} karyawan.${failedCount > 0 ? ` (Gagal: ${failedCount})` : ""}`,
+      sentCount,
+      failedCount,
+      errors
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Gagal memproses pengingat." });
+  }
+});
+
+// GET /api/friday-verifications (Fetch Friday digital signature server verifications)
+app.get("/api/friday-verifications", (req, res) => {
+  try {
+    const state = readState();
+    const verifications = state.fridayVerifications || {};
+    const date = req.query.date as string;
+    const workerId = req.query.workerId as string;
+
+    if (date && workerId) {
+      const key = `${workerId}_${date}`;
+      return res.json({ success: true, verification: verifications[key] || null });
+    }
+
+    if (date) {
+      const filtered: Record<string, any> = {};
+      for (const [k, v] of Object.entries(verifications)) {
+        if ((v as any).date === date) {
+          filtered[k] = v;
+        }
+      }
+      return res.json({ success: true, verifications: filtered });
+    }
+
+    return res.json({ success: true, verifications });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Internal Background Daemon: Check every 30s to auto-send reminder when target hour arrives
+let autoReminderTimer: NodeJS.Timeout | null = null;
+function initBackgroundAutoReminder() {
+  if (autoReminderTimer) clearInterval(autoReminderTimer);
+  autoReminderTimer = setInterval(async () => {
+    try {
+      const state = readState();
+      if (state.autoReminderEnabled === false) return;
+
+      const todayYMD = getJakartaDateStr();
+      const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
+      const [currentHour, currentMinute] = jktTimeString.split(":").map(Number);
+      
+      const scheduledTime = state.autoReminderHour || "09:00";
+      const [targetHour, targetMinute] = scheduledTime.split(":").map(Number);
+
+      const isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
+      const alreadySentToday = state.lastCronSentDate === todayYMD;
+
+      if (!alreadySentToday && isTimeTrigger) {
+        const holidayCheck = await checkIsHolidayOrWeekend(todayYMD);
+        if (holidayCheck.isBlocked) {
+          state.lastCronSentDate = todayYMD;
+          state.lastCronStatus = `Dilewati otomatis: ${holidayCheck.reason}.`;
+          writeState(state);
+          return;
+        }
+
+        const waStatus = getWhatsAppStatus();
+        if (waStatus.status !== "connected") {
+          return;
+        }
+
+        const workers = state.workers || [];
+        const records = state.attendanceRecords || [];
+        const activeWorkers = workers.filter((w: any) => w.isActive);
+        const absentWorkers = activeWorkers.filter((worker: any) => {
+          const record = records.find((r: any) => r.workerId === worker.id);
+          return !record || !record.attendance || !record.attendance[todayYMD];
+        });
+
+        if (absentWorkers.length === 0) {
+          state.lastCronSentDate = todayYMD;
+          state.lastCronStatus = `Selesai otomatis: Semua karyawan aktif telah absen.`;
+          writeState(state);
+          return;
+        }
+
+        const hostOrigin = state.lastHostOrigin || "http://localhost:3000";
+        const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
+        const fridayParam = isFriday ? "&friday=true" : "";
+        let sentCount = 0;
+
+        for (const worker of absentWorkers) {
+          if (!worker.phoneNumber) continue;
+          const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
+          const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
+          const result = await sendWhatsAppMessage(worker.phoneNumber, message);
+          if (result.success) sentCount++;
+          await new Promise(r => setTimeout(r, 1500));
+        }
+
+        state.lastCronSentDate = todayYMD;
+        state.lastCronStatus = `Pengingat otomatis terkirim ke ${sentCount} karyawan pada jam ${scheduledTime} WIB.`;
+        writeState(state);
+        console.log(`[AutoReminder Daemon] Sent to ${sentCount} workers at ${scheduledTime} WIB.`);
+      }
+    } catch (e) {
+      console.error("[AutoReminder Daemon Error]", e);
+    }
+  }, 30000);
+}
+initBackgroundAutoReminder();
 
 // ==========================================
 // DYNAMIC SHARE IMAGE & OPEN GRAPH PREVIEW

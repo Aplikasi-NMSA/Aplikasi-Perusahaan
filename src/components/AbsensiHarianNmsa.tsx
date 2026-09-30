@@ -86,6 +86,7 @@ import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from ".
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
 import { SelfSigningPortal } from "./SelfSigningPortal";
+import { WhatsAppBotReminderMenu } from "./WhatsAppBotReminderMenu";
 import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
 
 // Utility to format Date as local YYYY-MM-DD
@@ -974,20 +975,25 @@ export function AbsensiHarianNmsa({
   const [isAgreedToDataVerification, setIsAgreedToDataVerification] = useState<boolean>(false);
 
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [activeTab, setActiveTabInternal] = useState<"absen" | "workers" | "dashboard" | "pettycash">(() => {
+  const [activeTab, setActiveTabInternal] = useState<"absen" | "workers" | "dashboard" | "pettycash" | "bot_reminder">(() => {
     try {
       const saved = sessionStorage.getItem("nmsa_absen_active_tab");
-      if (saved && ["absen", "workers", "dashboard", "pettycash"].includes(saved)) {
+      if (saved && ["absen", "workers", "dashboard", "pettycash", "bot_reminder"].includes(saved)) {
         return saved as any;
       }
     } catch (e) {}
     return "absen";
   });
 
-  const setActiveTab = (tab: "absen" | "workers" | "dashboard" | "pettycash") => {
+  const setActiveTab = (tab: "absen" | "workers" | "dashboard" | "pettycash" | "bot_reminder") => {
     setActiveTabInternal(tab);
     try { sessionStorage.setItem("nmsa_absen_active_tab", tab); } catch (e) {}
   };
+
+  // Friday Digital Signature & Server Verification States
+  const isFridayToday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday" || urlParams.get("friday") === "true";
+  const [fridaySignatureDraft, setFridaySignatureDraft] = useState<string | null>(null);
+  const [fridayServerVerification, setFridayServerVerification] = useState<any | null>(null);
   const [globalAllowance, setGlobalAllowance] = useState<number>(() => {
     const saved = localStorage.getItem("global_allowance");
     return saved ? Number(saved) : 25000;
@@ -2147,19 +2153,25 @@ export function AbsensiHarianNmsa({
 
   // --- QUICK ATTENDANCE INJECTED STATES & ACTIONS ---
   const isQuickMode = urlParams.get("quick") === "true";
-  const [quickSubmitState, setQuickSubmitState] = useState<"idle" | "submitting" | "success" | "error" | "outside">("idle");
+  const [quickSubmitState, setQuickSubmitState] = useState<"idle" | "submitting" | "success" | "error" | "outside" | "friday_sign">("idle");
   const [quickSubmitMessage, setQuickSubmitMessage] = useState<string>("");
   const [selectedQuickStatus, setSelectedQuickStatus] = useState<string>("");
   const [showReasonInputFor, setShowReasonInputFor] = useState<string | null>(null);
   const [customReasonText, setCustomReasonText] = useState<string>("");
 
-  const triggerQuickCheckIn = async (status: string, overrideCoords?: { latitude: number; longitude: number }, customReason?: string) => {
+  const triggerQuickCheckIn = async (
+    status: string, 
+    overrideCoords?: { latitude: number; longitude: number }, 
+    customReason?: string,
+    customSignature?: string | null
+  ) => {
     if (!selfWorkerId) return;
     setQuickSubmitState("submitting");
     setSelectedQuickStatus(status);
     try {
       const todayYMD = formatLocalYYYYMMDD(new Date());
       const activeCoords = overrideCoords || userCoords;
+      const signatureToUse = customSignature || fridaySignatureDraft || signatures[selfWorkerId] || undefined;
       let handledByServer = false;
 
       try {
@@ -2172,7 +2184,9 @@ export function AbsensiHarianNmsa({
             latitude: activeCoords ? activeCoords.latitude : undefined,
             longitude: activeCoords ? activeCoords.longitude : undefined,
             status: status,
-            reason: customReason
+            reason: customReason,
+            signature: signatureToUse,
+            isFriday: isFridayToday
           })
         });
 
@@ -2183,6 +2197,17 @@ export function AbsensiHarianNmsa({
             setQuickSubmitState("success");
             setQuickSubmitMessage(data.message);
             setSelfIsAttendedToday(true);
+            if (data.verification) {
+              setFridayServerVerification(data.verification);
+            }
+            if (signatureToUse) {
+              setSignatures(prev => ({ ...prev, [selfWorkerId]: signatureToUse }));
+              try {
+                const current = JSON.parse(localStorage.getItem("weekly_signatures_v1") || "{}");
+                current[selfWorkerId] = signatureToUse;
+                localStorage.setItem("weekly_signatures_v1", JSON.stringify(current));
+              } catch (e) {}
+            }
           } else if (data.reason === "OUTSIDE") {
             handledByServer = true;
             setQuickSubmitState("outside");
@@ -2242,6 +2267,8 @@ export function AbsensiHarianNmsa({
         date: todayYMD,
         status,
         reason: customReason,
+        signature: signatureToUse,
+        isFriday: isFridayToday,
         coords: activeCoords,
         timestamp: new Date().toISOString()
       }).catch(e => console.warn("Firestore save fallback error:", e));
@@ -2257,12 +2284,16 @@ export function AbsensiHarianNmsa({
       if (selfIsAttendedToday || activeHolidayStatus.isHoliday) return;
       const isNear = geoDistance <= MAX_DISTANCE_METERS;
       if (isNear) {
-        triggerQuickCheckIn("Hadir");
+        if (isFridayToday && !signatures[selfWorkerId] && !fridaySignatureDraft) {
+          setQuickSubmitState("friday_sign");
+        } else {
+          triggerQuickCheckIn("Hadir");
+        }
       } else {
         setQuickSubmitState("outside");
       }
     }
-  }, [selfWorkerId, isQuickMode, geoStatus, geoDistance, quickSubmitState, userCoords, selfIsAttendedToday, activeHolidayStatus.isHoliday]);
+  }, [selfWorkerId, isQuickMode, geoStatus, geoDistance, quickSubmitState, userCoords, selfIsAttendedToday, activeHolidayStatus.isHoliday, isFridayToday]);
 
   // Geolocation Constants & Calculations
   const OFFICE_LAT = -6.244342;
@@ -2352,6 +2383,7 @@ export function AbsensiHarianNmsa({
     try {
       setSelfAttendStatus("idle");
       const todayYMD = formatLocalYYYYMMDD(new Date());
+      const signatureToUse = fridaySignatureDraft || signatures[selfWorker.id] || undefined;
       const res = await fetch("/api/self-attend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2360,7 +2392,9 @@ export function AbsensiHarianNmsa({
           date: todayYMD, 
           pin: selfInputPin,
           latitude: userCoords.latitude,
-          longitude: userCoords.longitude
+          longitude: userCoords.longitude,
+          signature: signatureToUse,
+          isFriday: isFridayToday
         }),
       });
       const data = await res.json();
@@ -2369,6 +2403,17 @@ export function AbsensiHarianNmsa({
         setSelfAttendMessage(data.message);
         setSelfIsAttendedToday(true);
         setShowSuccessModal(true);
+        if (data.verification) {
+          setFridayServerVerification(data.verification);
+        }
+        if (signatureToUse) {
+          setSignatures(prev => ({ ...prev, [selfWorker.id]: signatureToUse }));
+          try {
+            const current = JSON.parse(localStorage.getItem("weekly_signatures_v1") || "{}");
+            current[selfWorker.id] = signatureToUse;
+            localStorage.setItem("weekly_signatures_v1", JSON.stringify(current));
+          } catch (e) {}
+        }
 
         // Update locally to keep visual states reactive
         const updatedRecords = attendanceRecords.map((r) => {
