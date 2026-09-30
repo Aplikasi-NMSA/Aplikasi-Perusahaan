@@ -2648,7 +2648,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-stone-400 font-mono">Rp</span>
                   <input
                     type="text"
-                    placeholder="Contoh: 5.000.000"
+                    placeholder="0"
                     className="w-full pl-9 pr-3 py-2 bg-white border border-stone-200 rounded-xl text-sm font-mono font-bold text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
                     value={dpAmount !== '' ? formatRupiah(Number(dpAmount) || 0) : ''}
                     onChange={(e) => {
@@ -2665,7 +2665,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="Contoh: DP 30%, Termin 1 dari 3, sisa saat BAST"
+                  placeholder="Keterangan termin / tahapan pembayaran"
                   className="w-full px-3 py-2 bg-white border border-stone-200 rounded-xl text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   value={cicilanNotes}
                   onChange={(e) => setCicilanNotes(e.target.value)}
@@ -3625,7 +3625,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                       <td className="py-3 pr-2">
                         <input
                           type="text"
-                          placeholder="Contoh: Biaya Gaji Office Boy dan Satpam Kantor"
+                          placeholder="Rincian pos pengeluaran / uraian barang"
                           className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-3 text-sm focus:ring-1 focus:ring-stone-400 focus:outline-none"
                           value={item.item}
                           onChange={(e) => handleItemChange(index, 'item', e.target.value)}
@@ -3907,7 +3907,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                         type="number"
                         value={customTaxNominalInput}
                         onChange={(e) => setCustomTaxNominalInput(e.target.value)}
-                        placeholder="Contoh: 290400"
+                        placeholder="0"
                         className="w-full bg-white border border-stone-300 rounded-xl py-2 pl-9 pr-3 text-sm focus:ring-1 focus:ring-amber-500 focus:outline-none font-mono"
                       />
                     </div>

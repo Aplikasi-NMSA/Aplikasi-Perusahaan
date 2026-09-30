@@ -8,6 +8,8 @@ import {
   deleteDoc, 
   query, 
   orderBy,
+  where,
+  limit,
   Firestore,
   getDocFromServer,
   getDoc,
@@ -23,7 +25,8 @@ import {
   Auth, 
   User,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo } from './types';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
@@ -772,6 +775,56 @@ export const loginToFirebase = async (email: string, password: string): Promise<
   } catch (error) {
     console.error('Authentication Failed:', error);
     throw error;
+  }
+};
+
+export const loginWithGoogle = async (): Promise<User> => {
+  if (!firebaseAuth) {
+    throw new Error('Firebase Auth belum dikonfigurasi.');
+  }
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const result = await signInWithPopup(firebaseAuth, provider);
+  currentUser = result.user;
+  return result.user;
+};
+
+export const resetPasswordViaEmail = async (email: string): Promise<void> => {
+  if (!firebaseAuth) {
+    throw new Error('Firebase Auth belum dikonfigurasi.');
+  }
+  await sendPasswordResetEmail(firebaseAuth, email);
+};
+
+export const ensureUserProfile = async (
+  user: User,
+  defaults: { companyId?: string; companyName?: string } = {}
+): Promise<void> => {
+  if (!firestoreDb || !user) return;
+  try {
+    const docRef = doc(firestoreDb, 'users', user.uid);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      const companyId = (defaults.companyId || 'nmsa').toLowerCase().trim();
+      const companyName = defaults.companyName || 'PT Nusantara Mineral Sukses Abadi';
+      await setDoc(docRef, {
+        uid: user.uid,
+        email: user.email,
+        fullName: user.displayName || user.email?.split('@')[0] || 'User',
+        role: 'Divisi Keuangan',
+        companyId: companyId,
+        companyName: companyName,
+        createdAt: new Date().toISOString()
+      });
+      setActiveCompanyId(companyId);
+    } else {
+      const data = snap.data();
+      if (data?.companyId) {
+        setActiveCompanyId(data.companyId);
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to ensure user profile in Firestore:', err);
   }
 };
 

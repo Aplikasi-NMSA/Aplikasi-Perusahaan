@@ -1379,7 +1379,7 @@ export function AgendaManager({
                 <input
                   type="text"
                   required
-                  placeholder="Contoh: Pembayaran Pajak PPh 21 / 23 Masa Ini"
+                  placeholder="Judul kegiatan atau pekerjaan..."
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
                   className="w-full px-3.5 py-2 text-xs bg-stone-50 border border-stone-250 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-sans font-medium"

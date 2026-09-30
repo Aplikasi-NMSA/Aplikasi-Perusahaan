@@ -135,40 +135,7 @@ interface SppdManagerProps {
   initialSppdId?: string | null;
 }
 
-const INITIAL_SAMPLES: SPPDRecord[] = [
-  {
-    id: 'sppd_2026_01',
-    noSppd: 'SPPD-NMSA/VII/2026/001',
-    hariTanggal: '15 Juli 2026',
-    pemberiPerintah: 'H. A. Nursyam Halid',
-    pemberiPerintahJabatan: 'Direktur Utama',
-    namaPekerja: 'Nur Wahyudi',
-    jabatan: 'Supervisor',
-    divisi: 'Accounting & Finance',
-    kotaAsal: 'Jakarta (HO)',
-    kotaTujuan: 'Site Kolaka, Sulawesi Tenggara',
-    transportasi: 'Pesawat + Mobil Double Cabin',
-    lamaPerjalanan: '4 Hari 3 Malam',
-    tanggalMulai: '2026-07-15',
-    tanggalSelesai: '2026-07-18',
-    tujuanPerjalanan: 'Pengawasan Lapangan & Verifikasi Aset Tambang Mineral',
-    keteranganSppd: 'Semua bukti tiket & kwitansi hotel dilampirkan lengkap',
-    costItems: [
-      { id: 'c1', kategori: 'Uang Makan Per Hari', rincian: '4 Hari @ Rp 100.000', hargaAcuan: 400000, jumlah: 400000 },
-      { id: 'c2', kategori: 'Uang Saku Per Hari', rincian: '4 Hari @ Rp 100.000', hargaAcuan: 400000, jumlah: 400000 },
-      { id: 'c3', kategori: 'Transport Lokal Jakarta / Bandara', rincian: '2x Jalan (PP)', hargaAcuan: 400000, jumlah: 400000 },
-      { id: 'c4', kategori: 'Tiket Pesawat PP', rincian: 'Jakarta - Kendari PP', hargaAcuan: 3000000, jumlah: 3200000 },
-      { id: 'c5', kategori: 'Penginapan / Hotel', rincian: '3 Malam @ Rp 450.000', hargaAcuan: 1350000, jumlah: 1500000 },
-      { id: 'c6', kategori: 'Sewa Mobil Operational Site', rincian: 'Double Cabin 3 Hari', hargaAcuan: 4500000, jumlah: 4200000 },
-    ],
-    pemberiPerintahName: 'H. A. Nursyam Halid',
-    sppdDisetujuiName: 'Harijon',
-    sppdDisetujuiJabatan: 'Head of Operational',
-    sppdMengetahuiName: 'Nur Wahyudi',
-    status: 'Disetujui',
-    createdAt: new Date().toISOString()
-  }
-];
+const INITIAL_SAMPLES: SPPDRecord[] = [];
 
 export const SppdManager: React.FC<SppdManagerProps> = ({
   onPostToVoucherHO,
@@ -181,7 +148,7 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
       if (stored !== null) {
         return JSON.parse(stored);
       }
-      return INITIAL_SAMPLES;
+      return [];
     } catch {
       return [];
     }

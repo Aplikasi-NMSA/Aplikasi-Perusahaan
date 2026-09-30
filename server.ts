@@ -23,14 +23,18 @@ import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator"
 dotenv.config();
 
 const app = express();
-// Port configuration: CLI arg > process.env.PORT > 3000
+// Port configuration: AI Studio dev server MUST run on port 3000 (nginx listens on 8080 and proxies to 3000).
+// In external platforms (e.g. Render, Railway), use process.env.PORT.
 let PORT = 3000;
-if (process.env.PORT) {
-  PORT = parseInt(process.env.PORT, 10);
-}
 const portArgIndex = process.argv.indexOf("--port");
 if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
   PORT = parseInt(process.argv[portArgIndex + 1], 10);
+} else if (process.env.RENDER || process.env.RAILWAY_ENVIRONMENT) {
+  PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+} else if (process.env.NODE_ENV === "production" && process.env.PORT && process.env.PORT !== "8080") {
+  PORT = parseInt(process.env.PORT, 10);
+} else {
+  PORT = 3000;
 }
 
 process.on("SIGTERM", () => {
@@ -4286,16 +4290,28 @@ async function bootstrap() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const serverInstance = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server is running at http://localhost:${PORT}`);
     // Boot up WhatsApp Bot service if local credentials or session backup exists
-    try {
-      if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
-        console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi, mengaktifkan bot...");
-        initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
+          console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi, mengaktifkan bot...");
+          initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+        }
+      } catch (e) {
+        console.warn("Could not check WhatsApp credentials on startup:", e);
       }
-    } catch (e) {
-      console.warn("Could not check WhatsApp credentials on startup:", e);
+    }, 1000);
+  });
+
+  serverInstance.on("error", (err: any) => {
+    console.error("Server listen error:", err);
+    if (err.code === "EADDRINUSE" && PORT !== 3000) {
+      console.log("Port in use, falling back to 3000...");
+      app.listen(3000, "0.0.0.0", () => {
+        console.log("Server fallback running at http://localhost:3000");
+      });
     }
   });
 }

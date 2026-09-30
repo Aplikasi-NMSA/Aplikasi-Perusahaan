@@ -117,7 +117,7 @@ export default function App() {
 
   // Petty Cash master state
   const [pettyCashHolders, setPettyCashHolders] = useState<string[]>(() => {
-    const defaultHolders = ['Suryo Pranoto', 'Muhammad Akbar', 'Nurul Izza', 'Andi Dhiya Salsabila'];
+    const defaultHolders: string[] = [];
     try {
       const stored = localStorage.getItem('petty_cash_holders_v2');
       if (!stored || stored === 'undefined' || stored === 'null') return defaultHolders;
@@ -175,9 +175,9 @@ export default function App() {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-      return INITIAL_AGENDA_ITEMS;
+      return [];
     } catch (e) {
-      return INITIAL_AGENDA_ITEMS;
+      return [];
     }
   });
 
@@ -2214,6 +2214,7 @@ export default function App() {
 
     const newMemoSubmission: Submission = {
       id: 'sub-memo-' + Date.now(),
+      lokasi: 'Lt.1',
       tanggal: memo.tanggal || new Date().toISOString().split('T')[0],
       jenisPengajuan: 'Operasional Direksi',
       kode: docKode,
@@ -2221,14 +2222,19 @@ export default function App() {
       dibayarkanDengan: 'Cek/Transfer',
       status: 'Belum Lunas',
       notes: `Ref Internal Memo No. ${memo.nomorMemo}: ${memo.perihal || ''}`,
+      rekeningTujuan: memo.accountNumber || '',
       noRekeningTujuan: memo.accountNumber || '',
       namaBankTujuan: memo.bankName || 'Bank Mandiri',
       atasNamaRekeningTujuan: memo.accountHolder || recipient,
       dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
       disetujuiOleh: memo.penandatanganNama2 || 'Harijon',
       disetujuiJabatan: memo.penandatanganJabatan2 || 'Direktur Keuangan',
+      diverifikasiOleh: 'Andi Muhammad Rifki',
+      diverifikasiJabatan: 'Direktur',
       disetujuiOleh2: memo.penandatanganNama3 || 'Abdul Aziz Halid',
       disetujuiJabatan2: memo.penandatanganJabatan3 || 'Direktur Utama ANH',
+      dibukukanOleh: 'Sri Ekowati',
+      dibukukanJabatan: 'Accounting',
       items: [
         {
           id: 'item_memo_' + Date.now(),

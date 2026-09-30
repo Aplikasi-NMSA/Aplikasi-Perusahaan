@@ -104,6 +104,9 @@ export interface Submission {
   companyName?: string;
   companyLogoUrl?: string;
   rekeningTujuan?: string;
+  noRekeningTujuan?: string;
+  namaBankTujuan?: string;
+  atasNamaRekeningTujuan?: string;
 
   // Signatures for Bukti Pengeluaran Kas/Bank (F1)
   diajukanOleh?: string; // e.g. "Andi Dhiya Salsabila"
