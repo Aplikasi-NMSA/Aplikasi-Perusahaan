@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
+import { getVoucherShareLink } from '../utils/appLinks';
 import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
@@ -3701,7 +3702,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           } catch (_) {}
         }
 
-        const shareUrl = `${window.location.origin}/shared-view?${shareParams.toString()}`;
+        const shareUrl = getVoucherShareLink(shareModalSub.id, {
+          kode: shareModalSub.kode,
+          transaksi: shareSlug,
+          nominal: grandTotal,
+          kepada: shareModalSub.dibayarkanKepada,
+          tanggal: shareModalSub.tanggal,
+          status: shareModalSub.status,
+          bayar: shareModalSub.dibayarkanDengan
+        });
         const shareImageUrl = `/api/share-image?${shareParams.toString()}`;
 
         // Ensure backend memory and persistent store has the latest submission record for share-image

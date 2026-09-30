@@ -10,6 +10,7 @@ import {
 import { generateNextSppdNumber, saveSppdNumberUsage } from '../utils/sppdNumbering';
 import { terbilang } from '../lib/terbilang';
 import { PrintSppdDocument } from './PrintSppdDocument';
+import { getPublicSppdLink } from '../utils/appLinks';
 import { 
   saveSppdRecordsToFirestore, 
   loadSppdRecordsFromFirestore, 
@@ -575,7 +576,7 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
   };
 
   const handleCopyPublicSppdLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}#/input-sppd`;
+    const url = getPublicSppdLink();
     navigator.clipboard.writeText(url);
     setIsLinkCopied(true);
     setTimeout(() => setIsLinkCopied(false), 2500);

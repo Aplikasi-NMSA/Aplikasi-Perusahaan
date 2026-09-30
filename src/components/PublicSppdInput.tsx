@@ -3,6 +3,7 @@ import { NusantaraLogo } from './NusantaraLogo';
 import { PrintSppdDocument, terbilangRupiah } from './PrintSppdDocument';
 import { SPPDRecord, SPPDCostItem, SPPDCostAttachment } from './SppdManager';
 import { JabatanDinas } from '../data/pedomanBiaya';
+import { getPublicSppdLink } from '../utils/appLinks';
 import { 
   saveSppdRecordsToFirestore, 
   loadSppdRecordsFromFirestore 
@@ -278,7 +279,7 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
   };
 
   const handleCopyLink = () => {
-    const url = window.location.href;
+    const url = getPublicSppdLink();
     navigator.clipboard.writeText(url);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2500);

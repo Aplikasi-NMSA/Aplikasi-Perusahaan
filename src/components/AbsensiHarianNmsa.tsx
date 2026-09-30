@@ -1870,28 +1870,29 @@ export function AbsensiHarianNmsa({
           }
 
           if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
-            // Guard: If quiet background poll and user interacted within last 60s or is currently focused on an input/form, skip overwriting
+            // Guard: If quiet background poll and user interacted within last 2.5s or is currently focused on an input/form, skip overwriting
             const isInputActive = typeof document !== "undefined" && document.activeElement && 
               (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.tagName === "SELECT");
-            const isRecentInteraction = Date.now() - lastUserInteractionTimeRef.current < 60000;
+            const isRecentInteraction = Date.now() - lastUserInteractionTimeRef.current < 2500;
 
             if (!(quiet && (isInputActive || isRecentInteraction))) {
               const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
               setAttendanceRecords((prevLocal) => {
                 const map = new Map<string, AttendanceRecord>();
 
-                // 1. Keep local records first so local checkmarks are never wiped out
+                // 1. Keep local records baseline for workers not yet registered on server
                 (prevLocal || []).forEach((r) => {
                   if (allWorkerIds.has(r.workerId)) {
                     map.set(r.workerId, {
                       ...r,
                       attendance: { ...(r.attendance || {}) },
-                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+                      reasons: { ...(r.reasons || {}) }
                     });
                   }
                 });
 
-                // 2. Merge incoming server records (local records take priority over older server data)
+                // 2. Server state is authoritative (1 pintu 1 server online sync)
                 data.attendanceRecords.forEach((r: AttendanceRecord) => {
                   if (!allWorkerIds.has(r.workerId)) return;
                   const existing = map.get(r.workerId);
@@ -1899,13 +1900,18 @@ export function AbsensiHarianNmsa({
                     map.set(r.workerId, {
                       ...r,
                       attendance: { ...(r.attendance || {}) },
-                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+                      reasons: { ...(r.reasons || {}) }
                     });
                   } else {
-                    // Local state always takes priority to avoid checkmarks disappearing
-                    existing.attendance = { ...(r.attendance || {}), ...(existing.attendance || {}) };
-                    existing.customStatus = { ...(r.customStatus || {}), ...(existing.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
-                    if (r.dailyAllowance && !existing.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
+                    // Update authoritative online values from server
+                    existing.attendance = { ...(r.attendance || {}) };
+                    existing.customStatus = { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
+                    existing.reasons = { ...(r.reasons || {}) };
+                    if (r.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
+                    if (r.allowanceRate) existing.allowanceRate = r.allowanceRate;
+                    if (r.signatures) existing.signatures = { ...(r.signatures || {}) };
+                    if (r.notes) existing.notes = { ...(r.notes || {}) };
                   }
                 });
 
@@ -1997,15 +2003,30 @@ export function AbsensiHarianNmsa({
     return () => clearTimeout(fallbackTimer);
   }, []);
 
-  // 1b. Periodic quiet background sync (every 30 seconds) to get worker updates automatically
+  // 1b. Periodic quiet background sync (every 10 seconds) to get worker updates automatically
   useEffect(() => {
     if (!initialFetchDone) return;
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         fetchSharedState(true);
       }
-    }, 30000);
-    return () => clearInterval(interval);
+    }, 10000);
+
+    const onFocus = () => {
+      fetchSharedState(true);
+    };
+    const onOnline = () => {
+      fetchSharedState(true);
+    };
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
   }, [initialFetchDone]);
 
   // 2. Debounced auto-save to server when states change (only after initial load)
@@ -2188,20 +2209,23 @@ export function AbsensiHarianNmsa({
       // Synchronize locally to keep states reactive
       const updatedRecords = attendanceRecords.map((r) => {
         if (r.workerId === selfWorkerId) {
+          const newAtt = { ...(r.attendance || {}), [todayYMD]: status === "Hadir" };
+          const newCust = { ...(r.customStatus || {}) };
+          const newReas = { ...(r.reasons || {}) };
+
+          if (status === "Hadir" || status === "Absen") {
+            delete newCust[todayYMD];
+            delete newReas[todayYMD];
+          } else {
+            newCust[todayYMD] = status as any;
+            newReas[todayYMD] = customReason || `Diajukan via tautan mandiri (${status})`;
+          }
+
           return {
             ...r,
-            attendance: {
-              ...r.attendance,
-              [todayYMD]: status === "Hadir",
-            },
-            customStatus: {
-              ...r.customStatus,
-              [todayYMD]: status !== "Hadir" ? (status as any) : undefined
-            },
-            reasons: customReason ? {
-              ...(r.reasons || {}),
-              [todayYMD]: customReason
-            } : r.reasons
+            attendance: newAtt,
+            customStatus: newCust,
+            reasons: newReas
           };
         }
         return r;
@@ -2450,23 +2474,56 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    // Instantly sync to server so phone and desktop stay 100% online 1 pintu 1 server
+    syncStateToServer(
+      workers,
+      updated,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
   };
 
   const handleToggleAllForDay = (date: string, forceCheck: boolean) => {
     lastUserInteractionTimeRef.current = Date.now();
     const updated = attendanceRecords.map((r) => {
+      const newCustomStatus = { ...(r.customStatus || {}) };
+      const newReasons = { ...(r.reasons || {}) };
+      if (forceCheck) {
+        delete newCustomStatus[date];
+        delete newReasons[date];
+      }
       return {
         ...r,
         attendance: {
           ...(r.attendance || {}),
           [date]: forceCheck,
         },
+        customStatus: newCustomStatus,
+        reasons: newReasons,
       };
     });
     try {
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    syncStateToServer(
+      workers,
+      updated,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
   };
 
   const handleToggleAllForWorker = (workerId: string, forceCheck: boolean) => {
@@ -2474,12 +2531,20 @@ export function AbsensiHarianNmsa({
     const updated = attendanceRecords.map((r) => {
       if (r.workerId === workerId) {
         const newAttMap = { ...(r.attendance || {}) };
+        const newCustomStatus = { ...(r.customStatus || {}) };
+        const newReasons = { ...(r.reasons || {}) };
         weekDates.forEach((d) => {
           newAttMap[d] = forceCheck;
+          if (forceCheck) {
+            delete newCustomStatus[d];
+            delete newReasons[d];
+          }
         });
         return {
           ...r,
           attendance: newAttMap,
+          customStatus: newCustomStatus,
+          reasons: newReasons,
         };
       }
       return r;
@@ -2488,6 +2553,18 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    syncStateToServer(
+      workers,
+      updated,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
   };
 
   // Check if current week's report is submitted
@@ -10005,6 +10082,18 @@ export function AbsensiHarianNmsa({
                          } catch (e) {}
                          setAttendanceRecords(updated);
                          setManageStatusModal(null);
+                         syncStateToServer(
+                           workers,
+                           updated,
+                           weeklyReports,
+                           pettyCashReports,
+                           attendancePin,
+                           signatures,
+                           pettyCashHolders,
+                           attendanceLogs,
+                           waMethod,
+                           autoReminderHour
+                         );
                        };
 
                        return (

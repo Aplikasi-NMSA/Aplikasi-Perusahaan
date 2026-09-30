@@ -94,14 +94,28 @@ export function generateDefaultMemoNumber(sequence = 164, date = new Date()): st
 }
 
 /**
- * Extracts sequence number from memo number string like "168/IM-NMSA/KEU/IX/2026" -> 168
+ * Extracts sequence number from memo number string like "168/IM-NMSA/KEU/IX/2026", "No. : 168/...", or "169/..." -> 168, 169
  */
 export function extractMemoSequence(nomorMemo: string | undefined): number | null {
   if (!nomorMemo) return null;
-  const match = nomorMemo.trim().match(/^(\d+)/);
-  if (match && match[1]) {
-    const val = parseInt(match[1], 10);
-    return isNaN(val) ? null : val;
+  const cleaned = nomorMemo.trim();
+  // 1. Check start of string or right after "No." / "No. :"
+  const matchPrefix = cleaned.match(/(?:^|No\.?\s*:?\s*)(\d+)/i);
+  if (matchPrefix && matchPrefix[1]) {
+    const val = parseInt(matchPrefix[1], 10);
+    if (!isNaN(val) && val > 0) return val;
+  }
+  // 2. Fallback: match any leading sequence digits before "/"
+  const matchSlash = cleaned.match(/(\d+)\s*\//);
+  if (matchSlash && matchSlash[1]) {
+    const val = parseInt(matchSlash[1], 10);
+    if (!isNaN(val) && val > 0) return val;
+  }
+  // 3. Fallback: any group of digits
+  const matchGeneral = cleaned.match(/(\d+)/);
+  if (matchGeneral && matchGeneral[1]) {
+    const val = parseInt(matchGeneral[1], 10);
+    if (!isNaN(val) && val > 0) return val;
   }
   return null;
 }
@@ -110,17 +124,23 @@ export function extractMemoSequence(nomorMemo: string | undefined): number | nul
  * Calculates the next sequential accumulated memo number based on all existing memos.
  * Always increments by +1 from the highest existing memo number found.
  */
-export function getNextMemoSequence(existingMemos: InternalMemo[] = [], baseSequence = 164): number {
+export function getNextMemoSequence(existingMemos: InternalMemo[] = [], baseSequence = 168): number {
   if (!existingMemos || existingMemos.length === 0) {
     return baseSequence;
   }
-  let maxSeq = baseSequence - 1;
+  const foundSeqs: number[] = [];
   for (const m of existingMemos) {
     const seq = extractMemoSequence(m.nomorMemo);
-    if (seq !== null && seq > maxSeq) {
-      maxSeq = seq;
+    if (seq !== null && seq > 0) {
+      foundSeqs.push(seq);
     }
   }
+
+  if (foundSeqs.length === 0) {
+    return baseSequence;
+  }
+
+  const maxSeq = Math.max(...foundSeqs);
   return maxSeq + 1;
 }
 
@@ -130,7 +150,7 @@ export function getNextMemoSequence(existingMemos: InternalMemo[] = [], baseSequ
 export function generateNextMemoNumber(
   existingMemosOrCount: InternalMemo[] | number = [],
   date = new Date(),
-  baseSequence = 164
+  baseSequence = 168
 ): string {
   let nextSeq: number;
   if (Array.isArray(existingMemosOrCount)) {
@@ -243,17 +263,17 @@ export function createInitialMemo(
       linkedAmount: subTotal,
       companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
       companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-      useImageHeader: false, // Default to official layout with long line like PDF IM Tongkang
+      useImageHeader: true, // Always use banner kop surat as requested
       createdAt: new Date().toISOString(),
     };
   }
 
   // Default sample exactly matching user's official "IM - Pembayaran Tongkang" Word document
   return {
-    id: `memo-${Date.now()}`,
+    id: `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     nomorMemo: nextNomorMemo,
     tanggal: todayIso,
-    hariTanggalDisplay: 'Kamis / 24 September 2026',
+    hariTanggalDisplay: formatHariTanggalMemo(now),
     dari: 'Andi Muhammad Rifki – Direktur',
     kepada: 'Harijon – Direktur Keuangan',
     perihal: 'Pembayaran DP Batubara 50%',
@@ -277,7 +297,7 @@ export function createInitialMemo(
     penandatanganJabatan3: 'Direktur Utama ANH',
     companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
     companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-    useImageHeader: false, // Default to official layout with long line like Word document
+    useImageHeader: true, // Always use banner kop surat as requested
     createdAt: new Date().toISOString(),
   };
 }

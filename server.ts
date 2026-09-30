@@ -1653,6 +1653,9 @@ app.get("/api/shared-state", (req, res) => {
       workerId: r.workerId,
       workerName: r.workerName,
       attendance: r.attendance || {},
+      customStatus: r.customStatus || {},
+      reasons: r.reasons || {},
+      dailyAllowance: r.dailyAllowance || 25000,
       allowanceRate: r.allowanceRate,
       signatures: r.signatures || {},
       notes: r.notes || {}
@@ -1724,38 +1727,75 @@ app.post("/api/shared-state", (req, res) => {
       });
     }
 
-    // Merge attendance records worker-by-worker to prevent accidental loss of historical or concurrent attendance dates
+    // Merge attendance records worker-by-worker authoritatively
     let mergedAttendance = currentState.attendanceRecords || [];
     if (attendanceRecords !== undefined && Array.isArray(attendanceRecords)) {
-      const attMap = new Map();
-      for (const r of mergedAttendance) {
-        if (r && r.workerId) {
-          attMap.set(r.workerId, {
-            ...r,
-            attendance: { ...(r.attendance || {}) },
-            customStatus: { ...(r.customStatus || {}) },
-            reasons: { ...(r.reasons || {}) }
-          });
-        }
-      }
-      for (const r of attendanceRecords) {
-        if (r && r.workerId) {
-          const existing = attMap.get(r.workerId);
-          if (!existing) {
-            attMap.set(r.workerId, { ...r });
-          } else {
+      if (req.body.replaceAttendance) {
+        mergedAttendance = attendanceRecords;
+      } else {
+        const attMap = new Map();
+        for (const r of mergedAttendance) {
+          if (r && r.workerId) {
             attMap.set(r.workerId, {
-              ...existing,
               ...r,
-              dailyAllowance: r.dailyAllowance || existing.dailyAllowance || 25000,
-              attendance: { ...(existing.attendance || {}), ...(r.attendance || {}) },
-              customStatus: { ...(existing.customStatus || {}), ...(r.customStatus || {}) },
-              reasons: { ...(existing.reasons || {}), ...(r.reasons || {}) }
+              attendance: { ...(r.attendance || {}) },
+              customStatus: { ...(r.customStatus || {}) },
+              reasons: { ...(r.reasons || {}) }
             });
           }
         }
+        for (const r of attendanceRecords) {
+          if (r && r.workerId) {
+            const existing = attMap.get(r.workerId);
+            if (!existing) {
+              attMap.set(r.workerId, { ...r });
+            } else {
+              // Update scalar properties
+              existing.workerName = r.workerName || existing.workerName;
+              existing.dailyAllowance = r.dailyAllowance || existing.dailyAllowance || 25000;
+              existing.allowanceRate = r.allowanceRate || existing.allowanceRate;
+              if (r.signatures) {
+                existing.signatures = { ...(existing.signatures || {}), ...(r.signatures || {}) };
+              }
+              if (r.notes) {
+                existing.notes = { ...(existing.notes || {}), ...(r.notes || {}) };
+              }
+
+              // Update attendance, customStatus, and reasons per date authoritatively
+              if (r.attendance && typeof r.attendance === "object") {
+                if (!existing.attendance) existing.attendance = {};
+                if (!existing.customStatus) existing.customStatus = {};
+                if (!existing.reasons) existing.reasons = {};
+
+                Object.keys(r.attendance).forEach((d) => {
+                  const isPresent = r.attendance[d] === true;
+                  existing.attendance[d] = isPresent;
+
+                  if (isPresent) {
+                    // When marked Hadir (present), definitively CLEAR any custom status & reason
+                    delete existing.customStatus[d];
+                    delete existing.reasons[d];
+                  } else {
+                    // When not present (false), check if custom status is specified
+                    if (r.customStatus && r.customStatus[d]) {
+                      existing.customStatus[d] = r.customStatus[d];
+                    } else {
+                      // Explicitly cleared to standard Absen / Alpa
+                      delete existing.customStatus[d];
+                    }
+                    if (r.reasons && r.reasons[d]) {
+                      existing.reasons[d] = r.reasons[d];
+                    } else {
+                      delete existing.reasons[d];
+                    }
+                  }
+                });
+              }
+            }
+          }
+        }
+        mergedAttendance = Array.from(attMap.values());
       }
-      mergedAttendance = Array.from(attMap.values());
     }
 
     let mergedWeeklyReports = currentState.weeklyReports || [];
@@ -2360,6 +2400,8 @@ app.post("/api/self-attend", async (req, res) => {
     for (const r of records) {
       if (r.workerId === workerId && r.attendance && r.attendance[date] !== undefined) {
         r.attendance[date] = true;
+        if (r.customStatus) delete r.customStatus[date];
+        if (r.reasons) delete r.reasons[date];
         recordUpdated = true;
         break;
       }
@@ -2373,6 +2415,8 @@ app.post("/api/self-attend", async (req, res) => {
           workerRecord.attendance = {};
         }
         workerRecord.attendance[date] = true;
+        if (workerRecord.customStatus) delete workerRecord.customStatus[date];
+        if (workerRecord.reasons) delete workerRecord.reasons[date];
       } else {
         records.push({
           workerId,

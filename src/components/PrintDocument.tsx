@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import QRCode from 'qrcode';
 import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
+import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle } from 'lucide-react';
 import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing } from '../firebase';
@@ -2181,7 +2182,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
           } catch (_) {}
         }
 
-        const shareUrl = `${window.location.origin}/shared-view?${shareParams.toString()}`;
+        const shareUrl = getVoucherShareLink(submission.id, {
+          kode: submission.kode,
+          transaksi: shareSlug,
+          nominal: grandTotal,
+          kepada: submission.dibayarkanKepada,
+          tanggal: submission.tanggal,
+          status: submission.status,
+          bayar: submission.dibayarkanDengan
+        });
         const shareImageUrl = `/api/share-image?${shareParams.toString()}`;
 
         // Ensure backend memory and persistent store has the latest submission record for share-image
