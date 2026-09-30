@@ -1049,7 +1049,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 </button>
 
                 {isVoucherPickerOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-stone-300 rounded-xl shadow-xl z-20 max-h-60 overflow-y-auto p-2 space-y-1">
+                  <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-stone-300 rounded-xl shadow-2xl z-50 max-h-60 overflow-y-auto p-2 space-y-1">
                     <p className="text-[10px] font-bold text-stone-400 px-2 py-1 uppercase">
                       Pilih voucher untuk auto-fill memo:
                     </p>

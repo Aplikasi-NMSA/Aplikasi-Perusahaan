@@ -309,7 +309,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [isManualKode, setIsManualKode] = useState(false);
   const [lokasi, setLokasi] = useState('Lt. 1');
   const [tanggal, setTanggal] = useState('');
-  const [jenisPengajuan, setJenisPengajuan] = useState('Biaya Gaji');
+  const [jenisPengajuan, setJenisPengajuan] = useState('');
 
   // Project & RAB linking state (Accurate Online Proyek Integration)
   const [projectId, setProjectId] = useState<string>(initialSubmission?.projectId || '');
@@ -1072,7 +1072,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setId(initialSubmission.id);
       setLokasi(initialSubmission.lokasi);
       setTanggal(initialSubmission.tanggal);
-      setJenisPengajuan(initialSubmission.jenisPengajuan);
+      setJenisPengajuan(initialSubmission.jenisPengajuan || '');
       setKode(initialSubmission.kode);
       setIsManualKode(true);
       setDibayarkanKepada(initialSubmission.dibayarkanKepada);
@@ -1185,7 +1185,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       // Defaults mapping dynamically from company metadata profile if loaded
       setId('');
       setLokasi(details?.defaultLokasi || 'Lt. 1');
-      setJenisPengajuan(details?.defaultJenis || 'Biaya Gaji');
+      setJenisPengajuan('');
       setKode(details?.defaultKode || 'HO');
       setIsManualKode(false);
       setDibayarkanKepada('');

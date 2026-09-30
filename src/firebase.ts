@@ -190,7 +190,7 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     id: docId,
     lokasi: data.lokasi || firstItem.lokasi || 'Lt. 1',
     tanggal: data.tanggal || data.tanggal_pengajuan || firstItem.tanggal || new Date().toISOString().split('T')[0],
-    jenisPengajuan: data.jenisPengajuan || data.jenis_pengajuan || data.jenis || firstItem.jenis || 'Biaya Gaji',
+    jenisPengajuan: data.jenisPengajuan || data.jenis_pengajuan || data.jenis || firstItem.jenis || '',
     kode: docCode,
     dibayarkanKepada: data.dibayarkanKepada || data.dibayarkan_kepada || 'Penerima',
     dibayarkanDengan: data.dibayarkanDengan || data.dibayarkan_dengan || (finalStatus === 'Lunas' ? 'Cek/Transfer' : 'Tunai'),

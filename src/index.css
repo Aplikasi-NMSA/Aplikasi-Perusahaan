@@ -370,3 +370,17 @@ html, body {
     break-inside: avoid !important;
   }
 }
+
+/* Universal High-Priority Dropdown & Popover Stacking to Prevent Clipping */
+.action-menu-dropdown-popover,
+.app-header-dropdown,
+[role="menu"],
+[data-radix-popper-content-wrapper] {
+  z-index: 99999 !important;
+}
+
+tr:has([aria-expanded="true"]),
+tr.dropdown-active-row {
+  position: relative !important;
+  z-index: 70 !important;
+}

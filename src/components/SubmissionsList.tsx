@@ -130,17 +130,52 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   };
 
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+  const [actionMenuPosition, setActionMenuPosition] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    maxHeight: number;
+  } | null>(null);
+
+  const updateActionMenuPosition = (subId: string) => {
+    const btn = document.getElementById(`btn-action-trigger-${subId}`);
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const menuWidth = 224;
+    const menuEstimatedHeight = 360;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const openUpwards = spaceBelow < menuEstimatedHeight && spaceAbove > spaceBelow;
+
+    const left = Math.max(12, Math.min(window.innerWidth - menuWidth - 12, rect.right - menuWidth));
+
+    if (openUpwards) {
+      setActionMenuPosition({
+        bottom: Math.max(8, window.innerHeight - rect.top + 6),
+        left,
+        maxHeight: Math.min(460, spaceAbove - 16),
+      });
+    } else {
+      setActionMenuPosition({
+        top: rect.bottom + 6,
+        left,
+        maxHeight: Math.min(460, spaceBelow - 16),
+      });
+    }
+  };
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       const target = event.target as HTMLElement | null;
       if (!target?.closest('.action-menu-dropdown-root')) {
         setOpenActionMenuId(null);
+        setActionMenuPosition(null);
       }
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setOpenActionMenuId(null);
+        setActionMenuPosition(null);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -150,6 +185,19 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  useEffect(() => {
+    if (!openActionMenuId) return;
+    const handleScrollOrResize = () => {
+      updateActionMenuPosition(openActionMenuId);
+    };
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [openActionMenuId]);
   const [activeSheetTab, setActiveSheetTab] = useState<string>('Data Sinkron');
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
 
@@ -1298,8 +1346,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       {/* Main Content Layout Block: Standard List vs Google Sheets Simulator */}
       {layoutMode === 'standard' ? (
         /* Standard Table View */
-        <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden print:hidden">
-          <div className="overflow-x-auto">
+        <div className="bg-white rounded-2xl border border-stone-200 shadow-xs print:hidden">
+          <div className="overflow-x-auto min-h-[220px]">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-stone-50 border-b border-stone-200 text-stone-500 font-display text-[10px] uppercase tracking-widest font-extrabold">
@@ -1316,7 +1364,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   filteredSubmissions.map((sub) => {
                     const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
                     return (
-                      <tr key={sub.id} className="hover:bg-stone-50/50 transition">
+                      <tr key={sub.id} className={`hover:bg-stone-50/50 transition ${openActionMenuId === sub.id ? 'relative z-[60] bg-amber-50/25' : ''}`}>
                         <td className="py-4.5 px-6 whitespace-nowrap">
                           <div className="font-extrabold text-stone-900">
                             {formatDateIndonesian(sub.tanggal)}
@@ -1403,9 +1451,16 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                           <div className="relative inline-block text-left action-menu-dropdown-root">
                             <button
                               id={`btn-action-trigger-${sub.id}`}
+                              aria-expanded={openActionMenuId === sub.id}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setOpenActionMenuId(openActionMenuId === sub.id ? null : sub.id);
+                                if (openActionMenuId === sub.id) {
+                                  setOpenActionMenuId(null);
+                                  setActionMenuPosition(null);
+                                } else {
+                                  setOpenActionMenuId(sub.id);
+                                  updateActionMenuPosition(sub.id);
+                                }
                               }}
                               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-3xs border cursor-pointer ${
                                 openActionMenuId === sub.id
@@ -1420,7 +1475,24 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
                             {openActionMenuId === sub.id && (
                               <div
-                                className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-xl border border-stone-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 divide-y divide-stone-100 text-left"
+                                style={
+                                  actionMenuPosition
+                                    ? {
+                                        position: 'fixed',
+                                        top: actionMenuPosition.top !== undefined ? `${actionMenuPosition.top}px` : 'auto',
+                                        bottom: actionMenuPosition.bottom !== undefined ? `${actionMenuPosition.bottom}px` : 'auto',
+                                        left: `${actionMenuPosition.left}px`,
+                                        maxHeight: `${actionMenuPosition.maxHeight}px`,
+                                        zIndex: 99999,
+                                      }
+                                    : {
+                                        position: 'absolute',
+                                        right: 0,
+                                        marginTop: '0.375rem',
+                                        zIndex: 99999,
+                                      }
+                                }
+                                className="action-menu-dropdown-root action-menu-dropdown-popover w-54 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 overflow-y-auto animate-in fade-in zoom-in-95 duration-100 divide-y divide-stone-100 text-left"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <div className="py-1">
