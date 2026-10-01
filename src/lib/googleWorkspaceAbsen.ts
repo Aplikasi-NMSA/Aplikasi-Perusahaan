@@ -220,3 +220,27 @@ export async function exportAttendanceToGoogleSheet(
   return { spreadsheetId, spreadsheetUrl };
 }
 
+// Helper to search files in Google Drive
+export async function searchDriveFiles(
+  accessToken: string,
+  query: string
+): Promise<Array<{ id: string; name: string; mimeType: string; webViewLink?: string; createdTime?: string; modifiedTime?: string; size?: string }>> {
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,createdTime,modifiedTime,size)&pageSize=60&orderBy=modifiedTime desc`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  await handleApiError(res, "mencari berkas di Google Drive");
+  const data = await res.json();
+  return data.files || [];
+}
+
+// Helper to download content of a file from Google Drive
+export async function downloadDriveFileContent(accessToken: string, fileId: string): Promise<string> {
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  await handleApiError(res, "mengunduh berkas dari Google Drive");
+  return await res.text();
+}
+

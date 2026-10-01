@@ -65,7 +65,7 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
   return (
     <div
       id={id}
-      className={`bg-white text-black shadow-md border border-stone-200 mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] flex flex-col justify-between select-text internal-memo-page memo-word-document ${className}`}
+      className={`bg-white text-black shadow-md border border-[#e2e8f0] mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] flex flex-col justify-between select-text internal-memo-page memo-word-document ${className}`}
       style={{
         boxSizing: 'border-box',
         fontFamily: "Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif",

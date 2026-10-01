@@ -103,24 +103,26 @@ export class MemoGoogleDriveService {
       const dayNum = String(d.getDate()).padStart(2, '0');
       const dateFolderName = `${yearStr}-${monthNum}-${dayNum}`;
 
-      // Root dedicated folder for internal memos
-      const rootFolderName = 'INTERNAL-MEMO-NMSA';
-      const folderHierarchy = [rootFolderName, yearStr, monthFolderName, dateFolderName];
+      // Root dedicated archive folder for internal memos organized by Year / Month
+      const rootFolderName = 'ARSIP-INTERNAL-MEMO-NMSA';
+      const folderHierarchy = [rootFolderName, yearStr, monthFolderName];
       const folderPathStr = folderHierarchy.join('/');
 
-      // 3. Clean up file name
+      // 3. Clean up file name with sequential number prefix for automatic sorting by number in Google Drive
+      const numMatch = (memo.nomorMemo || '').match(/^(\d+)/);
+      const seqPrefix = numMatch ? `No_${numMatch[1].padStart(3, '0')}_` : '';
       const safeNomor = (memo.nomorMemo || 'IM-NMSA')
         .replace(/[\/\\?%*:|"<>]/g, '-')
         .replace(/\s+/g, '_');
       const safePerihal = (memo.perihal || 'Dokumen')
         .replace(/[\/\\?%*:|"<>]/g, '')
         .replace(/\s+/g, '_')
-        .slice(0, 40);
-      const fileName = `IM_${safeNomor}_${safePerihal}.pdf`;
+        .slice(0, 45);
+      const fileName = `${seqPrefix}${safeNomor} - ${safePerihal}.pdf`;
 
       // 4. Upload to Google Drive using authenticated token
       const result = await this.withDriveToken(async (token) => {
-        // Create or get the nested folder structure: INTERNAL-MEMO-NMSA / [Tahun] / [Bulan] / [Tanggal]
+        // Create or get the nested folder structure: ARSIP-INTERNAL-MEMO-NMSA / [Tahun] / [Bulan]
         const folderId = await getOrCreateNestedFolder(token, folderHierarchy);
 
         // Upload or overwrite existing PDF file
@@ -180,8 +182,8 @@ export class MemoGoogleDriveService {
       const dayNum = String(d.getDate()).padStart(2, '0');
       const dateFolderName = `${yearStr}-${monthNum}-${dayNum}`;
 
-      const rootFolderName = 'INTERNAL-MEMO-NMSA';
-      const folderHierarchy = [rootFolderName, yearStr, monthFolderName, dateFolderName];
+      const rootFolderName = 'ARSIP-INTERNAL-MEMO-NMSA';
+      const folderHierarchy = [rootFolderName, yearStr, monthFolderName];
       const folderPathStr = folderHierarchy.join('/');
 
       let ext = 'pdf';
@@ -191,14 +193,16 @@ export class MemoGoogleDriveService {
         ext = originalFileName.split('.').pop() || 'pdf';
       }
 
+      const numMatch = (memo.nomorMemo || '').match(/^(\d+)/);
+      const seqPrefix = numMatch ? `No_${numMatch[1].padStart(3, '0')}_` : '';
       const safeNomor = (memo.nomorMemo || 'IM-NMSA')
         .replace(/[\/\\?%*:|"<>]/g, '-')
         .replace(/\s+/g, '_');
       const safePerihal = (memo.perihal || 'Dokumen')
         .replace(/[\/\\?%*:|"<>]/g, '')
         .replace(/\s+/g, '_')
-        .slice(0, 30);
-      const fileName = `TTD_SCAN_IM_${safeNomor}_${safePerihal}.${ext}`;
+        .slice(0, 35);
+      const fileName = `${seqPrefix}${safeNomor}_TTD-SCAN_${safePerihal}.${ext}`;
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, folderHierarchy);

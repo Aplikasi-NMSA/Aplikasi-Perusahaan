@@ -304,58 +304,244 @@ export function createInitialMemo(
 
 /**
  * Generates an official A4 PDF Blob from a rendered Internal Memo DOM element
+ * Completely sanitizes modern Tailwind v4 oklch() color syntax to prevent html2canvas crashes.
  */
 export async function generateMemoPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
-  const html2canvasModule = await import('html2canvas');
-  const html2canvas = (html2canvasModule.default || html2canvasModule) as any;
   const { jsPDF } = await import('jspdf');
 
-  const canvas = await html2canvas(element, {
-    scale: 2,
-    useCORS: true,
-    allowTaint: true,
-    backgroundColor: '#ffffff',
-    logging: false,
-    windowWidth: 850,
-    onclone: (clonedDoc: Document) => {
-      // html2canvas doesn't support modern css oklch() color syntax from Tailwind v4.
-      // Sanitize all inline styles and elements in cloned document to safe RGB/hex colors.
-      const allElems = clonedDoc.querySelectorAll('*');
-      allElems.forEach((el) => {
-        const htmlEl = el as HTMLElement;
-        if (!htmlEl || !htmlEl.style) return;
-        // Strip or convert any oklch occurrences in style attributes
-        const styleAttr = htmlEl.getAttribute('style') || '';
-        if (styleAttr.includes('oklch')) {
-          htmlEl.setAttribute(
-            'style',
-            styleAttr.replace(/oklch\([^)]+\)/gi, '#000000')
-          );
+  try {
+    const html2canvasModule = await import('html2canvas');
+    const html2canvas = (html2canvasModule.default || html2canvasModule) as any;
+
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      windowWidth: 850,
+      onclone: (clonedDoc: Document) => {
+        // 1. Remove all external stylesheets that might contain oklch() from Tailwind v4
+        const linkSheets = clonedDoc.querySelectorAll('link[rel="stylesheet"]');
+        linkSheets.forEach((link) => link.remove());
+
+        // 2. Sanitize any inline <style> tags: remove or replace any oklch() colors
+        const styleTags = clonedDoc.querySelectorAll('style');
+        styleTags.forEach((tag) => {
+          if (tag.textContent && tag.textContent.includes('oklch')) {
+            try {
+              tag.textContent = tag.textContent.replace(/oklch\([^)]+\)/gi, '#000000');
+            } catch (e) {
+              tag.remove();
+            }
+          }
+        });
+
+        // 3. Inject a clean, comprehensive standalone stylesheet for the memo document
+        const cleanStyle = clonedDoc.createElement('style');
+        cleanStyle.type = 'text/css';
+        cleanStyle.textContent = `
+          * { box-sizing: border-box !important; }
+          body, html { margin: 0; padding: 0; background: #ffffff !important; color: #000000 !important; font-family: Calibri, 'Segoe UI', Arial, sans-serif !important; }
+          table { border-collapse: collapse !important; width: 100% !important; }
+          .bg-white { background-color: #ffffff !important; }
+          .text-black { color: #000000 !important; }
+          .border-black { border-color: #000000 !important; }
+          .border { border-width: 1px !important; border-style: solid !important; }
+          .border-b { border-bottom-width: 1px !important; border-bottom-style: solid !important; }
+          .border-r { border-right-width: 1px !important; border-right-style: solid !important; }
+          .flex { display: flex !important; }
+          .flex-col { flex-direction: column !important; }
+          .justify-between { justify-content: space-between !important; }
+          .items-center { align-items: center !important; }
+          .items-start { align-items: flex-start !important; }
+          .items-baseline { align-items: baseline !important; }
+          .grid { display: grid !important; }
+          .grid-cols-12 { grid-template-columns: repeat(12, minmax(0, 1fr)) !important; }
+          .col-span-4 { grid-column: span 4 / span 4 !important; }
+          .w-full { width: 100% !important; }
+          .text-center { text-align: center !important; }
+          .text-justify { text-align: justify !important; }
+          .font-bold { font-weight: bold !important; }
+          .font-semibold { font-weight: 600 !important; }
+          .uppercase { text-transform: uppercase !important; }
+          .underline { text-decoration: underline !important; }
+          .underline-offset-4 { text-underline-offset: 4px !important; }
+          .p-8 { padding: 2rem !important; }
+          .p-12 { padding: 3rem !important; }
+          .p-14 { padding: 3.5rem !important; }
+          .px-3 { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+          .py-1\\.5 { padding-top: 0.375rem !important; padding-bottom: 0.375rem !important; }
+          .my-4 { margin-top: 1rem !important; margin-bottom: 1rem !important; }
+          .my-5 { margin-top: 1.25rem !important; margin-bottom: 1.25rem !important; }
+          .mt-6 { margin-top: 1.5rem !important; }
+          .mb-4 { margin-bottom: 1rem !important; }
+          .mt-14 { margin-top: 3.5rem !important; }
+          .ml-10 { margin-left: 2.5rem !important; }
+          .space-y-1\\.5 > * + * { margin-top: 0.375rem !important; }
+          .w-36 { width: 9rem !important; }
+          .w-6 { width: 1.5rem !important; }
+          .leading-\\[1\\.15\\] { line-height: 1.15 !important; }
+          .text-\\[11pt\\] { font-size: 11pt !important; }
+          .text-\\[13pt\\] { font-size: 13pt !important; }
+          .tracking-wider { letter-spacing: 0.05em !important; }
+          img { max-width: 100% !important; height: auto !important; display: block !important; }
+        `;
+        clonedDoc.head.appendChild(cleanStyle);
+
+        // 4. Sanitize all DOM element style attributes
+        const allElems = clonedDoc.querySelectorAll('*');
+        allElems.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          if (!htmlEl || !htmlEl.getAttribute) return;
+          const styleAttr = htmlEl.getAttribute('style') || '';
+          if (styleAttr.includes('oklch')) {
+            htmlEl.setAttribute(
+              'style',
+              styleAttr.replace(/oklch\([^)]+\)/gi, '#000000')
+            );
+          }
+        });
+
+        // 5. Wrap cloned window's getComputedStyle with a Proxy to guarantee NO oklch string ever reaches html2canvas
+        const win = clonedDoc.defaultView || window;
+        if (win && win.getComputedStyle) {
+          const origCS = win.getComputedStyle.bind(win);
+          win.getComputedStyle = function(el: Element, pseudo?: string | null) {
+            const cs = origCS(el, pseudo);
+            return new Proxy(cs, {
+              get(target, prop) {
+                if (prop === 'getPropertyValue') {
+                  return (p: string) => {
+                    const val = target.getPropertyValue(p);
+                    if (typeof val === 'string' && val.includes('oklch')) {
+                      return '#000000';
+                    }
+                    return val;
+                  };
+                }
+                const val = (target as any)[prop];
+                if (typeof val === 'string' && val.includes('oklch')) {
+                  return '#000000';
+                }
+                return typeof val === 'function' ? val.bind(target) : val;
+              }
+            });
+          };
+        }
+      },
+    });
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.96);
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
+    const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
+    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(imgHeight, pdfHeight));
+    return pdf.output('blob');
+  } catch (canvasErr) {
+    console.warn('html2canvas rendering fallback triggered:', canvasErr);
+
+    // Bulletproof Fallback: Generate clean vector A4 PDF using jsPDF directly
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const pageWidth = pdf.internal.pageSize.getWidth(); // 210mm
+    const margin = 20;
+    const contentWidth = pageWidth - margin * 2;
+    let yPos = 20;
+
+    // Kop Surat fallback text header
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(14);
+    pdf.setTextColor(0, 0, 0);
+    pdf.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 7;
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.text('Mining & General Contractor - Batubara & Mineral', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 5;
+
+    pdf.setLineWidth(0.8);
+    pdf.setDrawColor(0, 0, 0);
+    pdf.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 1.2;
+    pdf.setLineWidth(0.3);
+    pdf.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 10;
+
+    // Extract text content from the element
+    const titleElem = element.querySelector('h2');
+    const memoTitle = titleElem ? titleElem.textContent || 'INTERNAL MEMO' : 'INTERNAL MEMO';
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(13);
+    pdf.text(memoTitle, pageWidth / 2, yPos, { align: 'center' });
+    yPos += 6;
+
+    const noElem = element.querySelector('p');
+    const memoNo = noElem ? noElem.textContent || '' : '';
+    pdf.setFontSize(11);
+    pdf.text(memoNo, pageWidth / 2, yPos, { align: 'center' });
+    yPos += 12;
+
+    // Table rows
+    const tableRows = element.querySelectorAll('table tr');
+    if (tableRows.length > 0) {
+      pdf.setLineWidth(0.4);
+      tableRows.forEach((row) => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 3) {
+          const label = cells[0].textContent?.trim() || '';
+          const colon = cells[1].textContent?.trim() || ':';
+          const val = cells[2].textContent?.trim() || '';
+
+          pdf.setFont('helvetica', 'bold');
+          pdf.text(label, margin + 4, yPos);
+          pdf.text(colon, margin + 35, yPos);
+          pdf.setFont('helvetica', 'normal');
+          pdf.text(val, margin + 42, yPos);
+          yPos += 7;
         }
       });
-      // Also remove or replace stylesheets that contain oklch definitions inside the cloned document
-      const styleSheets = clonedDoc.querySelectorAll('style, link[rel="stylesheet"]');
-      styleSheets.forEach((sheet) => {
-        if (sheet.textContent && sheet.textContent.includes('oklch')) {
-          try {
-            sheet.textContent = sheet.textContent.replace(/oklch\([^)]+\)/gi, '#000000');
-          } catch (e) {}
-        }
-      });
-    },
-  });
+    }
 
-  const imgData = canvas.toDataURL('image/jpeg', 0.96);
-  const pdf = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-  });
+    yPos += 8;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(11);
+    pdf.text('Dengan Hormat,', margin, yPos);
+    yPos += 7;
 
-  const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
-  const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
-  const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+    // Body content
+    const bodyElem = element.querySelector('.memo-rich-content') || element.querySelector('div.mt-6');
+    const bodyText = bodyElem ? (bodyElem.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    const splitBody = pdf.splitTextToSize(bodyText, contentWidth);
+    pdf.text(splitBody, margin, yPos);
+    yPos += splitBody.length * 5.5 + 10;
 
-  pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(imgHeight, pdfHeight));
-  return pdf.output('blob');
+    // Signatures
+    pdf.setFont('helvetica', 'normal');
+    pdf.text('Hormat Saya,', margin, yPos);
+    pdf.text('Menyetujui,', pageWidth - margin - 50, yPos);
+    yPos += 25;
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Andi Muhammad Rifki', margin, yPos);
+    pdf.text('Harijon', pageWidth - margin - 50, yPos);
+    yPos += 5;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.text('Direktur', margin, yPos);
+    pdf.text('Direktur Keuangan', pageWidth - margin - 50, yPos);
+
+    return pdf.output('blob');
+  }
 }

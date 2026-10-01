@@ -7,6 +7,7 @@ import {
   FileText, 
   CloudUpload, 
   Download, 
+  DownloadCloud,
   Plus, 
   Trash, 
   Edit, 
@@ -667,7 +668,16 @@ export function AbsensiHarianNmsa({
     }
   }, [weeklyReports]);
 
-  const [reportDisplayMode, setReportDisplayMode] = useState<'last3' | 'all'>('last3');
+  const [reportDisplayMode, setReportDisplayMode] = useState<'last3' | 'all'>('all');
+
+  // --- Copy / Restore Attendance from Google Drive & Historical Archive States ---
+  const [isCopyAttendanceModalOpen, setIsCopyAttendanceModalOpen] = useState<boolean>(false);
+  const [driveBackupsList, setDriveBackupsList] = useState<Array<{ id: string; name: string; mimeType: string; webViewLink?: string; createdTime?: string; modifiedTime?: string; size?: string }>>([]);
+  const [isLoadingDriveBackups, setIsLoadingDriveBackups] = useState<boolean>(false);
+  const [driveBackupScanError, setDriveBackupScanError] = useState<string>('');
+  const [copyStatusMessage, setCopyStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [isCopyingData, setIsCopyingData] = useState<boolean>(false);
+  const [copyModalActiveTab, setCopyModalActiveTab] = useState<'reports' | 'drive' | 'manual'>('reports');
 
   useEffect(() => {
     localStorage.setItem("attendance_logs_v1", JSON.stringify(attendanceLogs));
@@ -2014,9 +2024,41 @@ export function AbsensiHarianNmsa({
     }
   };
 
-  // 1. Load shared state from server on mount
+  // 1. Load shared state from server & Firestore on mount
   useEffect(() => {
     fetchSharedState();
+
+    // Proactively query and sync weekly_reports from Firestore so no historical reports vanish
+    (async () => {
+      try {
+        const { db } = await import('../lib/firebaseAbsen');
+        const { collection, getDocs } = await import('firebase/firestore');
+        const snap = await getDocs(collection(db, "weekly_reports"));
+        const fbReports: WeeklyReport[] = [];
+        snap.forEach((doc) => {
+          const d = doc.data();
+          if (d && (d.weekStartDate || d.id)) {
+            fbReports.push(d as WeeklyReport);
+          }
+        });
+        if (fbReports.length > 0) {
+          console.log(`☁️ Synced ${fbReports.length} historical weekly report(s) from Firestore.`);
+          setWeeklyReports((prev) => {
+            const combined = [...(prev || []), ...fbReports];
+            const deduped = deduplicateWeeklyReports(combined);
+            try {
+              localStorage.setItem("laporan_uang_makan_log", JSON.stringify(deduped));
+              localStorage.setItem("weekly_reports_nmsa", JSON.stringify(deduped));
+              localStorage.setItem("weekly_reports", JSON.stringify(deduped));
+            } catch (e) {}
+            return deduped;
+          });
+        }
+      } catch (fbErr) {
+        console.warn("Firestore weekly reports auto-sync notice:", fbErr);
+      }
+    })();
+
     const fallbackTimer = setTimeout(() => {
       setInitialFetchDone(true);
     }, 3500);

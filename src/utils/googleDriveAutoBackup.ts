@@ -6,7 +6,9 @@
 
 import { 
   getOrCreateNestedFolder, 
-  uploadFileToDrive 
+  uploadFileToDrive,
+  searchDriveFiles,
+  downloadDriveFileContent
 } from '../lib/googleWorkspaceAbsen';
 import { 
   ensureValidDriveToken, 
@@ -299,7 +301,30 @@ class GoogleDriveAutoBackupService {
           monthFolderName
         ]);
 
-        return await uploadFileToDrive(token, folderId, fileName, pdfBlob);
+        const uploadRes = await uploadFileToDrive(token, folderId, fileName, pdfBlob);
+
+        // Upload structured JSON backup so attendance data can be restored or copied anytime
+        try {
+          const jsonPayload = {
+            backupType: 'absensi_bulanan',
+            backupDate: new Date().toISOString(),
+            weekStartDate,
+            weekEndDate,
+            year: currentYear,
+            month: monthFolderName,
+            records: targetRecords,
+            workers: workersList,
+            signatures: signaturesMap,
+            source: 'Aplikasi Absensi & Uang Makan PT. NMSA'
+          };
+          const jsonBlob = new Blob([JSON.stringify(jsonPayload, null, 2)], { type: 'application/json' });
+          const jsonFileName = fileName.replace(/\.pdf$/i, '.json');
+          await uploadFileToDrive(token, folderId, jsonFileName, jsonBlob);
+        } catch (jsonErr) {
+          console.warn('Peringatan penyimpanan berkas JSON backup absensi:', jsonErr);
+        }
+
+        return uploadRes;
       });
 
       this.addLog({
@@ -376,7 +401,25 @@ class GoogleDriveAutoBackupService {
           periodFolderName
         ]);
 
-        return await uploadFileToDrive(token, folderId, fileName, pdfBlob);
+        const uploadRes = await uploadFileToDrive(token, folderId, fileName, pdfBlob);
+
+        // Upload structured JSON backup for this weekly report
+        try {
+          const jsonPayload = {
+            backupType: 'laporan_mingguan',
+            backupDate: new Date().toISOString(),
+            report,
+            workers: workersList,
+            signatures
+          };
+          const jsonBlob = new Blob([JSON.stringify(jsonPayload, null, 2)], { type: 'application/json' });
+          const jsonFileName = fileName.replace(/\.pdf$/i, '.json');
+          await uploadFileToDrive(token, folderId, jsonFileName, jsonBlob);
+        } catch (jsonErr) {
+          console.warn('Peringatan penyimpanan berkas JSON backup laporan mingguan:', jsonErr);
+        }
+
+        return uploadRes;
       });
 
       this.addLog({
@@ -783,6 +826,48 @@ class GoogleDriveAutoBackupService {
       await this.backupAbsensi();
     } catch (e) {
       console.warn('[Drive Auto-Backup] On app close sync warning:', e);
+    }
+  }
+
+  /**
+   * Search for all attendance backup files stored in Google Drive
+   */
+  public async listAttendanceDriveBackups(): Promise<Array<{
+    id: string;
+    name: string;
+    mimeType: string;
+    webViewLink?: string;
+    createdTime?: string;
+    modifiedTime?: string;
+    size?: string;
+  }>> {
+    try {
+      return await this.withDriveToken(async (token) => {
+        const query = "(name contains 'Absensi' or name contains 'Rekap' or name contains 'Uang_Makan' or name contains 'Data_') and trashed = false";
+        return await searchDriveFiles(token, query);
+      });
+    } catch (e) {
+      console.warn('Gagal membaca daftar cadangan Google Drive:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch and parse JSON content of a backup file from Google Drive
+   */
+  public async fetchDriveBackupJson(fileId: string): Promise<any | null> {
+    try {
+      return await this.withDriveToken(async (token) => {
+        const text = await downloadDriveFileContent(token, fileId);
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      });
+    } catch (e) {
+      console.warn('Gagal mengunduh berkas cadangan dari Google Drive:', e);
+      return null;
     }
   }
 }
