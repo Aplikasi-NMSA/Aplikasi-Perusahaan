@@ -155,6 +155,22 @@ export const googleSignIn = async (forceSelectAccount = false): Promise<{ user: 
   }
 };
 
+export const cleanDataForFirestore = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) return obj.map(cleanDataForFirestore);
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (val !== undefined) {
+        cleaned[key] = cleanDataForFirestore(val);
+      }
+    }
+    return cleaned;
+  }
+  return obj;
+};
+
 export const googleSignOut = async (): Promise<void> => {
   try {
     await signOut(auth);

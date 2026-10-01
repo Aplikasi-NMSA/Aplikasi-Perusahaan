@@ -2756,9 +2756,9 @@ export function AbsensiHarianNmsa({
 
     // Synchronize to Firebase
     try {
-      const { db } = await import('../lib/firebaseAbsen');
+      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
       const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, "weekly_reports", newReport.id), newReport);
+      await setDoc(doc(db, "weekly_reports", newReport.id), cleanDataForFirestore(newReport));
     } catch (fbErr) {
       console.warn("Firebase sync warning:", fbErr);
     }
@@ -2921,9 +2921,9 @@ export function AbsensiHarianNmsa({
     } catch (e) {}
 
     try {
-      const { db } = await import('../lib/firebaseAbsen');
+      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
       const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, "weekly_reports", updatedReport.id), updatedReport);
+      await setDoc(doc(db, "weekly_reports", updatedReport.id), cleanDataForFirestore(updatedReport));
     } catch (fbErr) {
       console.warn("Firebase update failed:", fbErr);
     }
@@ -5229,18 +5229,16 @@ export function AbsensiHarianNmsa({
                           maxLength={6}
                           placeholder="Masukkan PIN"
                           value={selfInputPin}
-                          disabled={geoStatus !== "available" || geoDistance === null || geoDistance > MAX_DISTANCE_METERS}
                           onChange={(e) => setSelfInputPin(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl py-2.5 pl-9 pr-4 text-sm text-center font-bold text-white tracking-widest placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl py-2.5 pl-9 pr-4 text-sm text-center font-bold text-white tracking-widest placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         />
                       </div>
                     </div>
 
-
                     <button
                       onClick={handleSelfSubmitAttendance}
-                      disabled={serverSyncing || geoStatus !== "available" || geoDistance === null || geoDistance > MAX_DISTANCE_METERS}
-                      className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 active:scale-[0.99] disabled:from-slate-800 disabled:to-slate-800/80 disabled:border-slate-700/50 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold text-sm py-3.5 px-6 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/30 hover:shadow-indigo-500/40"
+                      disabled={serverSyncing}
+                      className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm py-3.5 px-6 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/30 hover:shadow-indigo-500/40"
                     >
                       {serverSyncing ? (
                         <>
@@ -7281,10 +7279,10 @@ export function AbsensiHarianNmsa({
 
                       // Sinkronkan ke Firebase
                       try {
-                        const { db } = await import('../lib/firebaseAbsen');
+                        const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
                         const { doc, setDoc } = await import('firebase/firestore');
                         for (const rep of updatedWeeklyReports) {
-                          await setDoc(doc(db, "weekly_reports", rep.id), rep, { merge: true });
+                          await setDoc(doc(db, "weekly_reports", rep.id), cleanDataForFirestore(rep), { merge: true });
                         }
                       } catch (fbErr) {
                         console.warn("Firebase sync warning during backup:", fbErr);

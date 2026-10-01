@@ -317,6 +317,32 @@ export async function generateMemoPdfBlobFromElement(element: HTMLElement): Prom
     backgroundColor: '#ffffff',
     logging: false,
     windowWidth: 850,
+    onclone: (clonedDoc: Document) => {
+      // html2canvas doesn't support modern css oklch() color syntax from Tailwind v4.
+      // Sanitize all inline styles and elements in cloned document to safe RGB/hex colors.
+      const allElems = clonedDoc.querySelectorAll('*');
+      allElems.forEach((el) => {
+        const htmlEl = el as HTMLElement;
+        if (!htmlEl || !htmlEl.style) return;
+        // Strip or convert any oklch occurrences in style attributes
+        const styleAttr = htmlEl.getAttribute('style') || '';
+        if (styleAttr.includes('oklch')) {
+          htmlEl.setAttribute(
+            'style',
+            styleAttr.replace(/oklch\([^)]+\)/gi, '#000000')
+          );
+        }
+      });
+      // Also remove or replace stylesheets that contain oklch definitions inside the cloned document
+      const styleSheets = clonedDoc.querySelectorAll('style, link[rel="stylesheet"]');
+      styleSheets.forEach((sheet) => {
+        if (sheet.textContent && sheet.textContent.includes('oklch')) {
+          try {
+            sheet.textContent = sheet.textContent.replace(/oklch\([^)]+\)/gi, '#000000');
+          } catch (e) {}
+        }
+      });
+    },
   });
 
   const imgData = canvas.toDataURL('image/jpeg', 0.96);

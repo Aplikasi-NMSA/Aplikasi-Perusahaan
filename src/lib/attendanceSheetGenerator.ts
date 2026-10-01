@@ -438,6 +438,25 @@ export async function generateWeeklyReportPDFBlob(
       backgroundColor: "#ffffff",
       windowWidth: 794,
       logging: false,
+      onclone: (clonedDoc: Document) => {
+        const allElems = clonedDoc.querySelectorAll('*');
+        allElems.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          if (!htmlEl || !htmlEl.style) return;
+          const styleAttr = htmlEl.getAttribute('style') || '';
+          if (styleAttr.includes('oklch')) {
+            htmlEl.setAttribute('style', styleAttr.replace(/oklch\([^)]+\)/gi, '#000000'));
+          }
+        });
+        const styleSheets = clonedDoc.querySelectorAll('style, link[rel="stylesheet"]');
+        styleSheets.forEach((sheet) => {
+          if (sheet.textContent && sheet.textContent.includes('oklch')) {
+            try {
+              sheet.textContent = sheet.textContent.replace(/oklch\([^)]+\)/gi, '#000000');
+            } catch (e) {}
+          }
+        });
+      },
     });
 
     const imgData = canvas.toDataURL("image/jpeg", 0.95);
