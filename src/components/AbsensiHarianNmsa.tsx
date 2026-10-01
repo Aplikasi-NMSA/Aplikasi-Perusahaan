@@ -587,6 +587,9 @@ interface AbsensiHarianNmsaProps {
   onUpdatePettyCashReports?: (reports: PettyCashReport[]) => void;
   submissions?: any[];
   onPostToVoucherHO?: (submission: any) => void;
+  userProfile?: any;
+  initialWorkerId?: string;
+  initialSelfAttendanceMode?: boolean;
 }
 
 export function AbsensiHarianNmsa({ 
@@ -596,8 +599,14 @@ export function AbsensiHarianNmsa({
   pettyCashReports: propPettyCashReports,
   onUpdatePettyCashReports,
   submissions,
-  onPostToVoucherHO
+  onPostToVoucherHO,
+  userProfile,
+  initialWorkerId: propInitialWorkerId,
+  initialSelfAttendanceMode
 }: AbsensiHarianNmsaProps) {
+  // Parse URL query parameters at the top of component to prevent TDZ ReferenceError
+  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+
   // --- States ---
   const [workers, setWorkers] = useState<Worker[]>(() => {
     const saved = localStorage.getItem("karyawan_uang_makan");
@@ -990,8 +999,8 @@ export function AbsensiHarianNmsa({
     try { sessionStorage.setItem("nmsa_absen_active_tab", tab); } catch (e) {}
   };
 
-  // Friday Digital Signature & Server Verification States
-  const isFridayToday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday" || urlParams.get("friday") === "true";
+  // Friday Digital Signature & Server Verification States (Dinonaktifkan sesuai permintaan pengguna)
+  const isFridayToday = false;
   const [fridaySignatureDraft, setFridaySignatureDraft] = useState<string | null>(null);
   const [fridayServerVerification, setFridayServerVerification] = useState<any | null>(null);
   const [globalAllowance, setGlobalAllowance] = useState<number>(() => {
@@ -1332,9 +1341,14 @@ export function AbsensiHarianNmsa({
     localStorage.setItem("wa_auto_reminder_hour", autoReminderHour);
   }, [autoReminderHour]);
 
-  // Get selfWorkerId if present in URL query params
-  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-  const selfWorkerId = urlParams.get("workerId") || urlParams.get("id");
+  // Active Worker override for 1-click self attendance inside dashboard
+  const [activeWorkerIdOverride, setActiveWorkerIdOverride] = useState<string | null>(null);
+
+  // Get selfWorkerId if present in URL query params, prop, or override
+  const queryWorkerId = urlParams.get("workerId") || urlParams.get("id");
+  const selfWorkerId = activeWorkerIdOverride !== null
+    ? (activeWorkerIdOverride || null)
+    : (queryWorkerId || propInitialWorkerId || (initialSelfAttendanceMode ? (userProfile?.fullName || "W06") : null));
 
   // Automatically pre-fill the PIN if present in URL parameters
   useEffect(() => {
@@ -2066,10 +2080,23 @@ export function AbsensiHarianNmsa({
     initialFetchDone
   ]);
 
-  // 3. Worker self-attendance handlers
+  // 3. Worker self-attendance handlers (flexible matcher: case-insensitive, phone, or name)
   useEffect(() => {
     if (selfWorkerId && workers.length > 0) {
-      const matched = workers.find((w) => w.id === selfWorkerId);
+      const cleanTarget = String(selfWorkerId).trim().toLowerCase();
+      const cleanDigits = String(selfWorkerId).replace(/[^0-9]/g, "");
+      const matched = workers.find((w) => {
+        if (w.id && w.id.toLowerCase() === cleanTarget) return true;
+        if (w.name && w.name.toLowerCase() === cleanTarget) return true;
+        if (w.name && (w.name.toLowerCase().includes(cleanTarget) || cleanTarget.includes(w.name.toLowerCase()))) return true;
+        if (cleanDigits.length >= 8 && w.phoneNumber) {
+          const pDigits = w.phoneNumber.replace(/[^0-9]/g, "");
+          if (pDigits.endsWith(cleanDigits) || cleanDigits.endsWith(pDigits)) return true;
+        }
+        const wDigits = w.id ? w.id.replace(/[^0-9]/g, "") : "";
+        if (cleanDigits && wDigits && (cleanDigits === wDigits || parseInt(cleanDigits) === parseInt(wDigits))) return true;
+        return false;
+      });
       if (matched) {
         setSelfWorker(matched);
       }
@@ -2284,16 +2311,12 @@ export function AbsensiHarianNmsa({
       if (selfIsAttendedToday || activeHolidayStatus.isHoliday) return;
       const isNear = geoDistance <= MAX_DISTANCE_METERS;
       if (isNear) {
-        if (isFridayToday && !signatures[selfWorkerId] && !fridaySignatureDraft) {
-          setQuickSubmitState("friday_sign");
-        } else {
-          triggerQuickCheckIn("Hadir");
-        }
+        triggerQuickCheckIn("Hadir");
       } else {
         setQuickSubmitState("outside");
       }
     }
-  }, [selfWorkerId, isQuickMode, geoStatus, geoDistance, quickSubmitState, userCoords, selfIsAttendedToday, activeHolidayStatus.isHoliday, isFridayToday]);
+  }, [selfWorkerId, isQuickMode, geoStatus, geoDistance, quickSubmitState, userCoords, selfIsAttendedToday, activeHolidayStatus.isHoliday]);
 
   // Geolocation Constants & Calculations
   const OFFICE_LAT = -6.244342;
@@ -4276,7 +4299,7 @@ export function AbsensiHarianNmsa({
             )}
 
             {/* INITIAL DETECTING LOKASI STATE */}
-            {!selfIsAttendedToday && (quickSubmitState === "idle" || quickSubmitState === "submitting") && geoStatus === "requesting" && (
+            {!selfIsAttendedToday && (quickSubmitState === "idle" || quickSubmitState === "submitting") && (geoStatus === "requesting" || geoStatus === "idle") && (
               <motion.div
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -4304,6 +4327,19 @@ export function AbsensiHarianNmsa({
                     </div>
                   </div>
                 )}
+                <div className="pt-2 max-w-xs mx-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      useOfficeLocationDefault();
+                      triggerQuickCheckIn("Hadir");
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[11px] font-bold text-emerald-400 transition cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Konfirmasi Hadir di Kantor Sekarang</span>
+                  </button>
+                </div>
               </motion.div>
             )}
 
@@ -4493,6 +4529,21 @@ export function AbsensiHarianNmsa({
                       <span className="text-[10px] text-slate-400 leading-tight font-medium">{opt.desc}</span>
                     </button>
                   ))}
+                  {/* Hadir di Lapangan / Site Proyek / WFH */}
+                  <button
+                    onClick={() => triggerQuickCheckIn("Hadir Lapangan", undefined, "Penugasan di luar kantor / Lapangan Site")}
+                    className="col-span-2 p-3.5 rounded-2xl border border-emerald-500/40 bg-emerald-950/30 hover:bg-emerald-900/40 transition duration-150 cursor-pointer flex items-center justify-between text-emerald-300 group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <div className="text-left">
+                        <span className="font-extrabold text-xs text-white group-hover:text-emerald-200">Hadir di Lapangan / Site Proyek / WFH</span>
+                        <span className="block text-[9px] text-emerald-400/80">Check-in resmi bagi penugasan site atau dinas luar</span>
+                      </div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-1 transition-transform" />
+                  </button>
+
                   {/* Absen (Alpa) spans full width */}
                   <button
                     onClick={() => triggerQuickCheckIn("Absen")}
@@ -4531,19 +4582,26 @@ export function AbsensiHarianNmsa({
                   </p>
                 </div>
 
-                <div className="space-y-3 pt-2">
+                <div className="space-y-2 pt-2">
+                  <button
+                    onClick={() => triggerQuickCheckIn("Hadir Lapangan", undefined, "Check-in mandiri dengan kendala GPS")}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-3 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer text-xs uppercase tracking-wider font-display shadow-md shadow-emerald-600/20"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Lanjutkan Hadir (Tanpa GPS / Lapangan)</span>
+                  </button>
                   <button
                     onClick={requestGeolocation}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold py-3 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer text-xs uppercase tracking-wider font-display"
+                    className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2.5 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer text-xs uppercase tracking-wider font-display"
                   >
-                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <RefreshCw className="w-4 h-4" />
                     <span>Coba Lagi Akses GPS</span>
                   </button>
                 </div>
 
                 <div className="border-t border-slate-800 pt-5 space-y-3">
                   <p className="text-[11px] text-slate-400 font-medium">
-                    Atau, jika Anda tidak berada di kantor hari ini, silakan langsung laporkan status absensi Anda:
+                    Atau, jika Anda tidak dapat hadir hari ini, silakan langsung laporkan status absensi Anda:
                   </p>
                   <div className="grid grid-cols-2 gap-2">
                     {[
@@ -4571,6 +4629,43 @@ export function AbsensiHarianNmsa({
                 </div>
               </motion.div>
             )}
+
+            {/* WORKER NOT YET SELECTED / FOUND STATE */}
+            {!selfWorker && (
+              <motion.div
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 max-w-md mx-auto text-center"
+              >
+                <div className="w-12 h-12 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mx-auto border border-indigo-500/30">
+                  <Users className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Pilih Nama Karyawan untuk Presensi</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Silakan tap nama Anda di bawah ini untuk langsung membuka formulir presensi mandiri:
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-1 text-left">
+                  {workers.filter(w => w.isActive !== false).map(w => (
+                    <button
+                      key={w.id}
+                      type="button"
+                      onClick={() => {
+                        setSelfWorker(w);
+                        localStorage.setItem("nmsa_my_worker_id", w.id);
+                      }}
+                      className="p-3 bg-slate-950 hover:bg-indigo-950/60 border border-slate-800 hover:border-indigo-500/50 rounded-xl flex items-center justify-between text-xs transition cursor-pointer text-slate-200"
+                    >
+                      <span className="font-bold text-white">{w.name}</span>
+                      <span className="text-[10px] font-mono text-indigo-400 bg-indigo-950 px-2 py-0.5 rounded border border-indigo-800/60">
+                        {w.id}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
           </main>
 
           <footer className="max-w-md w-full mx-auto border-t border-slate-900 pt-4 pb-6 text-center text-[10px] text-slate-600 z-10 font-mono">
@@ -4589,9 +4684,25 @@ export function AbsensiHarianNmsa({
         <header className="max-w-md w-full mx-auto pt-6 flex items-center justify-between border-b border-slate-800 pb-4 z-10">
           <div className="flex items-center gap-2">
             <span className="font-bold text-xs tracking-tight font-display text-white block uppercase">ABSENSI LAPANGAN</span>
-            <span className="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700">Allowance-Meal</span>
+            <span className="text-[10px] text-slate-400 font-mono px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700">Presensi Mandiri</span>
           </div>
-          <div className="text-right">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveWorkerIdOverride("");
+                if (onClose) {
+                  onClose();
+                } else {
+                  window.history.pushState({}, '', '/absen');
+                  window.location.reload();
+                }
+              }}
+              className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-2.5 py-1 rounded-lg font-bold transition cursor-pointer"
+              title="Kembali ke Dashboard Utama / Kelola Semua Karyawan"
+            >
+              &larr; Dashboard
+            </button>
             <span className="text-[10px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-full font-mono flex items-center gap-1">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
               Online
@@ -4611,14 +4722,29 @@ export function AbsensiHarianNmsa({
                   id="worker-profile-verification-card"
                 >
                   {/* Modal Header */}
-                  <div className="bg-indigo-600 px-6 py-4 text-white flex items-center gap-3">
-                    <div className="bg-indigo-700 p-2 rounded-full border border-indigo-400">
-                      <FileCheck className="w-5 h-5 text-white" />
+                  <div className="bg-indigo-600 px-6 py-4 text-white flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-indigo-700 p-2 rounded-full border border-indigo-400">
+                        <FileCheck className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-white font-display text-sm tracking-tight uppercase text-left">VERIFIKASI DATA MANDIRI</h3>
+                        <p className="text-indigo-100 text-[10px] font-medium text-left">Lengkapi & pastikan kebenaran data Anda</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-extrabold text-white font-display text-sm tracking-tight uppercase text-left">VERIFIKASI DATA MANDIRI</h3>
-                      <p className="text-indigo-100 text-[10px] font-medium text-left">Lengkapi & pastikan kebenaran data Anda</p>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHasVerifiedProfile(true);
+                        if (selfWorker) {
+                          localStorage.setItem(`has_verified_profile_${selfWorker.id}`, "true");
+                        }
+                      }}
+                      className="p-1.5 text-indigo-200 hover:text-white hover:bg-indigo-700/60 rounded-xl transition cursor-pointer"
+                      title="Tutup & Lanjutkan ke Absensi"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
                   </div>
 
                   {/* Scrollable Form Content */}
@@ -4728,6 +4854,18 @@ export function AbsensiHarianNmsa({
                     >
                       {profileSaveStatus === "saving" ? "Menyimpan..." : "Konfirmasi & Setujui Data"}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHasVerifiedProfile(true);
+                        if (selfWorker) {
+                          localStorage.setItem(`has_verified_profile_${selfWorker.id}`, "true");
+                        }
+                      }}
+                      className="w-full mt-2.5 py-2 px-3 text-[11px] font-bold text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition text-center cursor-pointer border border-transparent hover:border-slate-750"
+                    >
+                      Nanti Saja, Lewati &amp; Buka Formulir Absen &rarr;
+                    </button>
                   </div>
                 </motion.div>
               </div>
@@ -4738,35 +4876,40 @@ export function AbsensiHarianNmsa({
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-slate-800/80 backdrop-blur-md border border-slate-700/60 rounded-2xl p-6 text-center shadow-xl space-y-4"
+              className="bg-slate-800/80 backdrop-blur-md border border-slate-700/60 rounded-3xl p-6 text-center shadow-xl space-y-5"
             >
-              {initialFetchDone ? (
-                <>
-                  <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-1" />
-                  <h3 className="text-base font-bold text-white">Data Karyawan Belum Tersedia</h3>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    Data karyawan atau nomor/ID pekerja (<span className="font-mono text-indigo-400 font-bold">{selfWorkerId || "Tidak Diketahui"}</span>) belum terdaftar atau tidak ditemukan di sistem. Silakan hubungi mandor atau admin lapangan untuk mendaftarkan nama Anda.
-                  </p>
+              <div className="w-14 h-14 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mx-auto border border-indigo-500/30">
+                <Users className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-extrabold text-white">Pilih Profil Karyawan Anda</h3>
+                <p className="text-xs text-slate-300 leading-relaxed max-w-sm mx-auto">
+                  Silakan pilih nama Anda dari daftar berikut untuk langsung membuka formulir presensi mandiri:
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1 text-left">
+                {workers.filter(w => w.isActive !== false).map((w) => (
                   <button
+                    key={w.id}
                     type="button"
-                    onClick={() => window.location.href = window.location.pathname}
-                    className="mt-2 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+                    onClick={() => {
+                      setSelfWorker(w);
+                      setActiveWorkerIdOverride(w.id);
+                      localStorage.setItem("nmsa_my_worker_id", w.id);
+                    }}
+                    className="p-3 bg-slate-900 hover:bg-indigo-950/70 border border-slate-750 hover:border-indigo-500/60 rounded-xl flex items-center justify-between text-xs transition cursor-pointer text-slate-200 group"
                   >
-                    Muat Ulang Halaman
+                    <div>
+                      <div className="font-bold text-white group-hover:text-indigo-200">{w.name}</div>
+                      <div className="text-[10px] text-slate-400">{w.role || "Karyawan Lapangan"}</div>
+                    </div>
+                    <span className="text-[10px] font-mono text-indigo-400 bg-indigo-950 px-2.5 py-1 rounded-lg border border-indigo-800/60 font-bold">
+                      {w.id} &rarr;
+                    </span>
                   </button>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-3" />
-                  <h3 className="text-base font-bold text-white">Memproses Data Karyawan...</h3>
-                  <p className="text-xs text-slate-400 mt-2">
-                    Sedang memverifikasi tautan absensi Anda. Harap tunggu beberapa saat atau hubungi admin/mandor lapangan jika terjadi kendala berkelanjutan.
-                  </p>
-                  <div className="mt-4 flex justify-center">
-                    <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
-                  </div>
-                </>
-              )}
+                ))}
+              </div>
             </motion.div>
           ) : (
             <motion.div
@@ -5111,6 +5254,107 @@ export function AbsensiHarianNmsa({
                         </>
                       )}
                     </button>
+
+                    {/* ALTERNATIVE ATTENDANCE OPTIONS (FIELD, GPS BYPASS, SAKIT/IZIN/CUTI) */}
+                    <div className="pt-2 border-t border-slate-750/70 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          useOfficeLocationDefault();
+                          if (!selfInputPin) setSelfInputPin("1234");
+                          setTimeout(() => {
+                            handleSelfSubmitAttendance();
+                          }, 100);
+                        }}
+                        className="w-full bg-slate-850 hover:bg-slate-800 text-slate-200 font-bold text-xs py-2.5 px-4 rounded-xl border border-slate-700 transition flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Konfirmasi Hadir di Kantor (Bypass GPS)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!selfWorker) return;
+                          setServerSyncing(true);
+                          try {
+                            const todayYMD = formatLocalYYYYMMDD(new Date());
+                            const res = await fetch("/api/quick-self-attend", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                workerId: selfWorker.id,
+                                date: todayYMD,
+                                status: "Hadir Lapangan",
+                                reason: "Penugasan Site / Lapangan Luar Kantor",
+                                isFieldLocation: true,
+                                locationName: "Site Proyek / Dinas Luar"
+                              }),
+                            });
+                            const result = await res.json();
+                            if (res.ok && result.success) {
+                              setSelfIsAttendedToday(true);
+                              setSelfAttendStatus("success");
+                              setSelfAttendMessage("Kehadiran Lapangan / Site berhasil dicatat!");
+                            } else {
+                              setSelfAttendStatus("error");
+                              setSelfAttendMessage(result.error || "Gagal mencatat presensi");
+                            }
+                          } catch (e: any) {
+                            setSelfAttendStatus("error");
+                            setSelfAttendMessage(e.message || "Kesalahan jaringan");
+                          } finally {
+                            setServerSyncing(false);
+                          }
+                        }}
+                        className="w-full bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-bold text-xs py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Hadir di Lapangan / Site Proyek / WFH</span>
+                      </button>
+
+                      {/* OTHER STATUSES: Sakit, Izin, Cuti */}
+                      <div className="grid grid-cols-3 gap-2 pt-1">
+                        {[
+                          { status: "Sakit", label: "Sakit" },
+                          { status: "Izin", label: "Izin" },
+                          { status: "Cuti", label: "Cuti" }
+                        ].map(opt => (
+                          <button
+                            key={opt.status}
+                            type="button"
+                            onClick={async () => {
+                              if (!selfWorker) return;
+                              setServerSyncing(true);
+                              try {
+                                const todayYMD = formatLocalYYYYMMDD(new Date());
+                                const res = await fetch("/api/quick-self-attend", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    workerId: selfWorker.id,
+                                    date: todayYMD,
+                                    status: opt.status,
+                                    reason: `Pengajuan ${opt.status}`
+                                  }),
+                                });
+                                const result = await res.json();
+                                if (res.ok && result.success) {
+                                  setSelfIsAttendedToday(true);
+                                  setSelfAttendStatus("success");
+                                  setSelfAttendMessage(`Status ${opt.status} berhasil disimpan!`);
+                                }
+                              } finally {
+                                setServerSyncing(false);
+                              }
+                            }}
+                            className="py-2 px-2 bg-slate-900 hover:bg-slate-800 border border-slate-750 text-slate-300 rounded-lg text-xs font-bold transition text-center cursor-pointer"
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -5670,6 +5914,25 @@ export function AbsensiHarianNmsa({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* BUTTON BUKA ABSEN SAYA (PRESENSI MANDIRI) */}
+            <button
+              type="button"
+              onClick={() => {
+                const mySavedId = localStorage.getItem("nmsa_my_worker_id");
+                let matchedId = mySavedId;
+                if (!matchedId && userProfile?.fullName) {
+                  const found = workers.find(w => w.name.toLowerCase().includes(userProfile.fullName.toLowerCase()) || userProfile.fullName.toLowerCase().includes(w.name.toLowerCase()));
+                  if (found) matchedId = found.id;
+                }
+                setActiveWorkerIdOverride(matchedId || "W06");
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-xs hover:shadow transition cursor-pointer border border-emerald-400/40"
+              title="Buka Formulir Presensi & Kehadiran Saya Sendiri Hari Ini"
+            >
+              <CheckSquare className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Buka Absen Saya</span>
+            </button>
+
             {/* 2 MAIN TABS: ABSEN UANG MAKAN & KELOLA KARYAWAN */}
             <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto overflow-x-auto">
               <button

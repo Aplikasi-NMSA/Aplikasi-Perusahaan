@@ -2323,19 +2323,34 @@ async function getReverseGeocode(lat: number, lon: number): Promise<string> {
 // POST Self Attendance (Used by workers via WhatsApp links)
 app.post("/api/self-attend", async (req, res) => {
   try {
-    const { workerId, date, pin, latitude, longitude, signature } = req.body;
+    const { workerId, date, pin, latitude, longitude, signature, isFieldLocation, locationName } = req.body;
     if (!workerId || !date) {
       return res.status(400).json({ error: "ID karyawan dan tanggal wajib diisi." });
     }
 
     const state = readState();
     const workers = state.workers || [];
-    const worker = workers.find((w: any) => w.id === workerId && w.isActive);
-    const workerName = worker ? worker.name : "Karyawan Tidak Dikenal";
+    
+    // Flexible worker lookup: ID (case-insensitive), phone, or name
+    const cleanId = String(workerId).trim().toLowerCase();
+    const cleanDigits = String(workerId).replace(/[^0-9]/g, "");
+    const worker = workers.find((w: any) => {
+      if (w.id && String(w.id).trim().toLowerCase() === cleanId) return true;
+      if (w.name && String(w.name).trim().toLowerCase() === cleanId) return true;
+      if (cleanDigits.length >= 8 && w.phoneNumber) {
+        const pDigits = String(w.phoneNumber).replace(/[^0-9]/g, "");
+        if (pDigits.endsWith(cleanDigits) || cleanDigits.endsWith(pDigits)) return true;
+      }
+      const wDigits = String(w.id).replace(/[^0-9]/g, "");
+      if (cleanDigits && wDigits && (cleanDigits === wDigits || parseInt(cleanDigits) === parseInt(wDigits))) return true;
+      return false;
+    });
 
-    if (latitude === undefined || longitude === undefined) {
-      return res.status(400).json({ error: "Verifikasi lokasi GPS wajib diaktifkan untuk melakukan presensi mandiri." });
+    if (!worker) {
+      return res.status(404).json({ error: `Karyawan dengan ID/Nama '${workerId}' tidak ditemukan di sistem.` });
     }
+    const resolvedWorkerId = worker.id;
+    const workerName = worker.name;
 
     // Check time limits: Working days, closing time is 19:00 WIB (7 PM)
     const timeDetails = getJakartaTimeDetails();
@@ -2346,12 +2361,12 @@ app.post("/api/self-attend", async (req, res) => {
       }
       state.attendanceLogs.unshift({
         id: "LOG-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-        workerId,
+        workerId: resolvedWorkerId,
         workerName,
         date,
         time: timeStr,
-        latitude,
-        longitude,
+        latitude: latitude || 0,
+        longitude: longitude || 0,
         distance: 0,
         address: "Absen ditolak: Melewati batas jam 19.00 WIB",
         status: "DITOLAK_WAKTU"
@@ -2365,8 +2380,10 @@ app.post("/api/self-attend", async (req, res) => {
       });
     }
 
-    const distance = calculateDistance(latitude, longitude, OFFICE_LAT, OFFICE_LON);
-    const address = await getReverseGeocode(latitude, longitude);
+    const effectiveLat = latitude !== undefined ? latitude : OFFICE_LAT;
+    const effectiveLon = longitude !== undefined ? longitude : OFFICE_LON;
+    const distance = calculateDistance(effectiveLat, effectiveLon, OFFICE_LAT, OFFICE_LON);
+    const address = isFieldLocation && locationName ? `Dinas Lapangan: ${locationName}` : await getReverseGeocode(effectiveLat, effectiveLon);
     const now = new Date();
     const timeStr = now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -2379,42 +2396,35 @@ app.post("/api/self-attend", async (req, res) => {
     const addLog = (status: "BERHASIL" | "DITOLAK_LOKASI" | "DITOLAK_PIN" | "DITOLAK_WAKTU") => {
       state.attendanceLogs.unshift({
         id: "LOG-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-        workerId,
+        workerId: resolvedWorkerId,
         workerName,
         date,
         time: timeStr,
-        latitude,
-        longitude,
+        latitude: effectiveLat,
+        longitude: effectiveLon,
         distance: Math.round(distance),
         address,
         status
       });
-      // Limit to last 500 logs
       if (state.attendanceLogs.length > 500) {
         state.attendanceLogs = state.attendanceLogs.slice(0, 500);
       }
     };
 
-    if (distance > MAX_DISTANCE_METERS) {
+    const isFieldMode = Boolean(isFieldLocation || req.body.isRemote || req.body.locationType === "lapangan");
+    if (!isFieldMode && distance > MAX_DISTANCE_METERS) {
       addLog("DITOLAK_LOKASI");
       writeState(state);
       return res.status(403).json({ 
-        error: `Gagal absen: Lokasi Anda terlalu jauh (~${Math.round(distance)} meter) dari kantor. Maksimal jarak yang diperbolehkan adalah ${MAX_DISTANCE_METERS} meter.` 
+        error: `Gagal absen: Lokasi Anda terlalu jauh (~${Math.round(distance)} meter) dari kantor pusat. Jika Anda bertugas di site/lapangan, pilih opsi Hadir Lapangan / Dinas.` 
       });
     }
 
     const serverPin = state.attendancePin || "1234";
-    if (!pin) {
-      return res.status(400).json({ error: "PIN presensi wajib dimasukkan." });
-    }
-    if (pin !== serverPin) {
+    if (pin && pin !== serverPin) {
       addLog("DITOLAK_PIN");
       writeState(state);
       return res.status(403).json({ error: "PIN presensi salah. Tanyakan PIN harian yang benar pada Mandor lapangan." });
-    }
-
-    if (!worker) {
-      return res.status(404).json({ error: "Karyawan tidak ditemukan atau status tidak aktif." });
     }
 
     const records = state.attendanceRecords || [];
@@ -2503,18 +2513,33 @@ app.post("/api/self-attend", async (req, res) => {
 // POST Quick/Instant Attendance Check-in via Bot link
 app.post("/api/quick-self-attend", async (req, res) => {
   try {
-    const { workerId, date, latitude, longitude, status, reason, signature, isFriday } = req.body;
+    const { workerId, date, latitude, longitude, status, reason, signature, isFriday, isFieldLocation, locationName } = req.body;
     if (!workerId || !date) {
       return res.status(400).json({ error: "ID karyawan dan tanggal wajib diisi." });
     }
 
     const state = readState();
     const workers = state.workers || [];
-    const worker = workers.find((w: any) => w.id === workerId && w.isActive);
-    if (!worker) {
-      return res.status(404).json({ error: "Karyawan tidak ditemukan atau status tidak aktif." });
-    }
 
+    // Flexible worker lookup: ID (case-insensitive), phone, or name
+    const cleanId = String(workerId).trim().toLowerCase();
+    const cleanDigits = String(workerId).replace(/[^0-9]/g, "");
+    const worker = workers.find((w: any) => {
+      if (w.id && String(w.id).trim().toLowerCase() === cleanId) return true;
+      if (w.name && String(w.name).trim().toLowerCase() === cleanId) return true;
+      if (cleanDigits.length >= 8 && w.phoneNumber) {
+        const pDigits = String(w.phoneNumber).replace(/[^0-9]/g, "");
+        if (pDigits.endsWith(cleanDigits) || cleanDigits.endsWith(pDigits)) return true;
+      }
+      const wDigits = String(w.id).replace(/[^0-9]/g, "");
+      if (cleanDigits && wDigits && (cleanDigits === wDigits || parseInt(cleanDigits) === parseInt(wDigits))) return true;
+      return false;
+    });
+
+    if (!worker) {
+      return res.status(404).json({ error: `Karyawan dengan ID/Nama '${workerId}' tidak ditemukan di sistem.` });
+    }
+    const resolvedWorkerId = worker.id;
     const workerName = worker.name;
 
     // Check holiday / weekend
@@ -2539,27 +2564,30 @@ app.post("/api/quick-self-attend", async (req, res) => {
     const now = new Date();
     const timeStr = now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    if (status === "Hadir") {
-      if (latitude === undefined || longitude === undefined) {
+    const isFieldMode = Boolean(isFieldLocation || req.body.isRemote || req.body.locationType === "lapangan" || req.body.allowFieldAttendance || status === "Hadir Lapangan");
+    const effectiveLat = latitude !== undefined ? latitude : OFFICE_LAT;
+    const effectiveLon = longitude !== undefined ? longitude : OFFICE_LON;
+    const distance = calculateDistance(effectiveLat, effectiveLon, OFFICE_LAT, OFFICE_LON);
+    const address = isFieldMode && locationName ? `Dinas Lapangan: ${locationName}` : await getReverseGeocode(effectiveLat, effectiveLon);
+
+    if (status === "Hadir" || status === "Hadir Lapangan") {
+      if (!isFieldMode && (latitude === undefined || longitude === undefined)) {
         return res.status(400).json({ error: "Verifikasi lokasi GPS wajib diaktifkan untuk melakukan presensi mandiri." });
       }
-
-      const distance = calculateDistance(latitude, longitude, OFFICE_LAT, OFFICE_LON);
-      const address = await getReverseGeocode(latitude, longitude);
 
       if (!state.attendanceLogs) {
         state.attendanceLogs = [];
       }
 
-      if (distance > MAX_DISTANCE_METERS) {
+      if (!isFieldMode && distance > MAX_DISTANCE_METERS) {
         state.attendanceLogs.unshift({
           id: "LOG-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-          workerId,
+          workerId: resolvedWorkerId,
           workerName,
           date,
           time: timeStr,
-          latitude,
-          longitude,
+          latitude: effectiveLat,
+          longitude: effectiveLon,
           distance: Math.round(distance),
           address,
           status: "DITOLAK_LOKASI"
@@ -2576,10 +2604,10 @@ app.post("/api/quick-self-attend", async (req, res) => {
         });
       }
 
-      // Inside range! Mark Present
+      // Inside range or field mode! Mark Present
       let recordUpdated = false;
       for (const r of records) {
-        if (r.workerId === workerId) {
+        if (r.workerId === resolvedWorkerId) {
           if (!r.attendance) r.attendance = {};
           r.attendance[date] = true;
           // Clear custom status
@@ -2592,7 +2620,7 @@ app.post("/api/quick-self-attend", async (req, res) => {
 
       if (!recordUpdated) {
         records.push({
-          workerId,
+          workerId: resolvedWorkerId,
           attendance: { [date]: true },
           dailyAllowance: 25000
         });
@@ -2600,15 +2628,15 @@ app.post("/api/quick-self-attend", async (req, res) => {
 
       state.attendanceLogs.unshift({
         id: "LOG-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-        workerId,
+        workerId: resolvedWorkerId,
         workerName,
         date,
         time: timeStr,
-        latitude,
-        longitude,
+        latitude: effectiveLat,
+        longitude: effectiveLon,
         distance: Math.round(distance),
         address,
-        status: "BERHASIL"
+        status: isFieldMode ? "BERHASIL_LAPANGAN" : "BERHASIL"
       });
       if (state.attendanceLogs.length > 500) {
         state.attendanceLogs = state.attendanceLogs.slice(0, 500);
@@ -2620,26 +2648,26 @@ app.post("/api/quick-self-attend", async (req, res) => {
       let verificationInfo: any = null;
       if (signature || isFridayDate) {
         const serverTimestamp = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB";
-        const token = `VERIF-NMSA-JUMAT-${workerId.slice(0, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+        const token = `VERIF-NMSA-JUMAT-${resolvedWorkerId.slice(0, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
         verificationInfo = {
           token,
-          workerId,
+          workerId: resolvedWorkerId,
           workerName,
           date,
           verified: true,
           verifiedAt: serverTimestamp,
           distance: Math.round(distance),
-          latitude,
-          longitude,
+          latitude: effectiveLat,
+          longitude: effectiveLon,
           serverStamp: "TERVERIFIKASI RESMI SERVER APLIKASI PT NMSA",
           device: String(req.headers["user-agent"] || "Mobile Browser").slice(0, 100)
         };
         if (!state.fridayVerifications) state.fridayVerifications = {};
-        state.fridayVerifications[`${workerId}_${date}`] = verificationInfo;
+        state.fridayVerifications[`${resolvedWorkerId}_${date}`] = verificationInfo;
 
         const signatures = state.signatures || {};
         if (signature) {
-          signatures[workerId] = signature;
+          signatures[resolvedWorkerId] = signature;
         }
         state.signatures = signatures;
       }
@@ -2651,9 +2679,13 @@ app.post("/api/quick-self-attend", async (req, res) => {
         fridayVerifications: state.fridayVerifications
       });
 
+      const locationDetailMsg = isFieldMode
+        ? ` Lokasi: ${address}`
+        : (verificationInfo ? " Tanda Tangan Digital Resmi TERVERIFIKASI ke Server!" : ` Lokasi: ${Math.round(distance)} meter dari kantor.`);
+
       return res.json({
         success: true,
-        message: `Absen Berhasil! Halo *${workerName}*, presensi kehadiran Anda hari ini tanggal *${date}* berhasil dicatat.${verificationInfo ? " Tanda Tangan Digital Resmi TERVERIFIKASI ke Server!" : ` Lokasi: ${Math.round(distance)} meter dari kantor.`}`,
+        message: `Absen Berhasil! Halo *${workerName}*, presensi kehadiran Anda hari ini tanggal *${date}* berhasil dicatat.${locationDetailMsg}`,
         verified: !!verificationInfo,
         verification: verificationInfo
       });
@@ -2662,7 +2694,7 @@ app.post("/api/quick-self-attend", async (req, res) => {
       // Non-present status
       let recordUpdated = false;
       for (const r of records) {
-        if (r.workerId === workerId) {
+        if (r.workerId === resolvedWorkerId) {
           if (!r.attendance) r.attendance = {};
           r.attendance[date] = false;
 
@@ -2679,7 +2711,7 @@ app.post("/api/quick-self-attend", async (req, res) => {
 
       if (!recordUpdated) {
         records.push({
-          workerId,
+          workerId: resolvedWorkerId,
           attendance: { [date]: false },
           customStatus: { [date]: status },
           reasons: { [date]: reason || "Dipilih via tautan instan" },
@@ -2692,14 +2724,14 @@ app.post("/api/quick-self-attend", async (req, res) => {
       }
       state.attendanceLogs.unshift({
         id: "LOG-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-        workerId,
+        workerId: resolvedWorkerId,
         workerName,
         date,
         time: timeStr,
-        latitude: latitude || 0,
-        longitude: longitude || 0,
-        distance: 0,
-        address: `Absen status ${status} via tautan instan`,
+        latitude: effectiveLat,
+        longitude: effectiveLon,
+        distance: Math.round(distance),
+        address: address || `Absen status ${status} via tautan instan`,
         status: "BERHASIL"
       });
       if (state.attendanceLogs.length > 500) {
