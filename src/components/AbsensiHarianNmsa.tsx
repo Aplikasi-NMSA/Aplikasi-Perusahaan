@@ -78,7 +78,7 @@ import {
 import { Worker, AttendanceRecord, WeeklyReport, PettyCashReport, PettyCashTransaction, TransactionType, BankStatementReport, Submission } from "../types";
 import { INITIAL_WORKERS, INDONESIAN_DAYS, COMMON_CATEGORIES } from "../constantsAbsen";
 import { triggerExcelDownload } from "../lib/excelGenerator";
-import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
+import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob, generateWorkerAutoSignature } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
 import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken } from "../lib/firebaseAbsen";
 import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken } from "../firebase";
@@ -598,6 +598,10 @@ export function AbsensiHarianNmsa({
   submissions,
   onPostToVoucherHO
 }: AbsensiHarianNmsaProps) {
+  // Safe URL query parameters declaration at top level to prevent TDZ ReferenceError
+  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const selfWorkerId = urlParams.get("workerId") || urlParams.get("id");
+
   // --- States ---
   const [workers, setWorkers] = useState<Worker[]>(() => {
     const saved = localStorage.getItem("karyawan_uang_makan");
@@ -1094,6 +1098,58 @@ export function AbsensiHarianNmsa({
     );
   };
 
+  // Fitur TTD Otomatis Setiap Hari Jumat:
+  // Menjamin seluruh karyawan aktif otomatis memiliki tanda tangan digital sah saat dicetak
+  useEffect(() => {
+    const activeWorkers = workers.filter(w => w.isActive);
+    if (activeWorkers.length === 0) return;
+
+    let hasChange = false;
+    const nextSigs = { ...signatures };
+
+    activeWorkers.forEach(w => {
+      if (!nextSigs[w.id]) {
+        const autoSig = generateWorkerAutoSignature(w.name);
+        if (autoSig) {
+          nextSigs[w.id] = autoSig;
+          hasChange = true;
+        }
+      }
+    });
+
+    if (!nextSigs['finance_receiver']) {
+      nextSigs['finance_receiver'] = generateWorkerAutoSignature('Andi Dhiya Salsabila');
+      hasChange = true;
+    }
+    if (!nextSigs['finance_reporter']) {
+      nextSigs['finance_reporter'] = generateWorkerAutoSignature('Nur Wahyudi');
+      hasChange = true;
+    }
+
+    if (hasChange) {
+      setSignatures(nextSigs);
+      try {
+        localStorage.setItem("weekly_signatures_v1", JSON.stringify(nextSigs));
+      } catch (e) {}
+    }
+  }, [workers]);
+
+  const handleRegenerateFridaySignatures = () => {
+    const activeWorkers = workers.filter(w => w.isActive);
+    const updated: Record<string, string> = {};
+    activeWorkers.forEach(w => {
+      const sig = generateWorkerAutoSignature(w.name);
+      if (sig) updated[w.id] = sig;
+    });
+    updated['finance_receiver'] = generateWorkerAutoSignature('Andi Dhiya Salsabila');
+    updated['finance_reporter'] = generateWorkerAutoSignature('Nur Wahyudi');
+    setSignatures(updated);
+    try {
+      localStorage.setItem("weekly_signatures_v1", JSON.stringify(updated));
+    } catch (e) {}
+    alert("Berhasil! Tanda tangan digital otomatis hari Jumat telah dibuat & diperbarui untuk seluruh karyawan aktif.");
+  };
+
   // Refs to hold latest state for non-leaking listeners & safe backup
   const attendanceRecordsRef = useRef(attendanceRecords);
   const workersRef = useRef(workers);
@@ -1332,10 +1388,6 @@ export function AbsensiHarianNmsa({
     localStorage.setItem("wa_auto_reminder_hour", autoReminderHour);
   }, [autoReminderHour]);
 
-  // Get selfWorkerId if present in URL query params
-  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-  const selfWorkerId = urlParams.get("workerId") || urlParams.get("id");
-
   // Automatically pre-fill the PIN if present in URL parameters
   useEffect(() => {
     const urlPin = urlParams.get("pin") || urlParams.get("code") || urlParams.get("pin_harian");
@@ -1386,6 +1438,28 @@ export function AbsensiHarianNmsa({
     return dates;
   };
   const weekDates = getDatesOfWeek();
+
+  // Kalkulasi Total Uang Makan Hari Jumat berdasarkan akumulasi absen hari Senin s.d. Jumat
+  const { totalCalculatedFridayAllowance, totalCalculatedDaysPresent } = useMemo(() => {
+    const activeWorkerList = workers.filter(w => w.isActive);
+    let totalRp = 0;
+    let totalDays = 0;
+    activeWorkerList.forEach(w => {
+      const rec = attendanceRecords.find(r => r.workerId === w.id);
+      let days = 0;
+      weekDates.forEach(d => {
+        if (rec && rec.attendance[d]) {
+          const cStatus = rec?.customStatus?.[d];
+          if (cStatus !== "Meeting" && cStatus !== "Izin" && cStatus !== "Sakit" && cStatus !== "Absen") {
+            days++;
+          }
+        }
+      });
+      totalDays += days;
+      totalRp += days * (rec?.dailyAllowance || globalAllowance);
+    });
+    return { totalCalculatedFridayAllowance: totalRp, totalCalculatedDaysPresent: totalDays };
+  }, [workers, attendanceRecords, weekDates, globalAllowance]);
 
   // --- PDF Petty Cash OCR States ---
   const [fileToUpload, setFileToUpload] = useState<File | null>(null);
@@ -7284,6 +7358,52 @@ export function AbsensiHarianNmsa({
                 </div>
               </div>
 
+              {/* BANNER INFORMASI PENCAIRAN UANG MAKAN HARI JUMAT BERDASARKAN ABSEN SENIN - JUMAT */}
+              <div className="mx-6 my-4 p-4 rounded-2xl bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white shadow-md border border-emerald-700/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 shrink-0 shadow-inner">
+                    <DollarSign className="w-6 h-6 text-emerald-400" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-mono uppercase tracking-widest bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full font-bold">
+                        🕌 Pencairan Setiap Hari Jumat
+                      </span>
+                      <span className="text-[10px] font-mono bg-teal-400/20 text-teal-300 border border-teal-400/30 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                        <Check className="w-3 h-3 text-teal-300" /> TTD Otomatis Aktif
+                      </span>
+                    </div>
+                    <h4 className="text-sm font-extrabold text-white">
+                      Perhitungan Uang Makan Hari Jumat (Berdasarkan Absensi Senin s.d. Jumat)
+                    </h4>
+                    <p className="text-[11px] text-emerald-100/80 leading-relaxed max-w-2xl">
+                      Uang makan dibayarkan pada hari Jumat sesuai akumulasi hadir nyata dari hari Senin. Tanda tangan/paraf seluruh karyawan otomatis terisi sehingga saat dicetak sudah ada tanda tangan lengkap.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0 bg-slate-950/40 p-3 rounded-xl border border-white/10">
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-300 block uppercase font-mono">Total Dana Cair Jumat:</span>
+                    <span className="text-base font-black font-mono text-emerald-300">
+                      Rp {totalCalculatedFridayAllowance.toLocaleString("id-ID")}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block font-mono">
+                      {totalCalculatedDaysPresent} Hari Kehadiran Tim
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRegenerateFridaySignatures}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+                    title="Perbarui goresan tanda tangan otomatis seluruh karyawan"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Auto TTD</span>
+                  </button>
+                </div>
+              </div>
+
               {/* TABLE COMPONENT */}
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -7318,9 +7438,9 @@ export function AbsensiHarianNmsa({
                           </th>
                         );
                       })}
-                      <th className="py-3.5 px-4 text-center">Total Hadir</th>
-                      <th className="py-3.5 px-4 text-right">Uang Makan</th>
-                      <th className="py-3.5 px-3 text-center min-w-[90px]">Paraf Online</th>
+                      <th className="py-3.5 px-4 text-center">Total Hadir (Senin-Jumat)</th>
+                      <th className="py-3.5 px-4 text-right">Uang Makan Cair Jumat</th>
+                      <th className="py-3.5 px-3 text-center min-w-[95px]">Paraf Otomatis (Jumat)</th>
                       <th className="py-3.5 px-4 text-center">Aksi Cepat</th>
                     </tr>
                   </thead>
@@ -7498,12 +7618,21 @@ export function AbsensiHarianNmsa({
                                );
                              })}
 
-                            <td className="py-4 px-4 text-center font-bold font-display text-slate-800">
-                              {totalDaysPresent} Hari
+                            <td className="py-4 px-4 text-center">
+                              <div className="font-extrabold font-display text-slate-800 text-sm">{totalDaysPresent} Hari</div>
+                              <div className="text-[10px] text-slate-500 font-mono">Senin s.d. Jumat</div>
                             </td>
                             
-                            <td className="py-4 px-4 text-right font-bold font-mono text-slate-900">
-                              Rp {(totalDaysPresent * (rec?.dailyAllowance || globalAllowance)).toLocaleString("id-ID")}
+                            <td className="py-4 px-4 text-right">
+                              <div className="font-black font-mono text-emerald-800 text-sm">
+                                Rp {(totalDaysPresent * (rec?.dailyAllowance || globalAllowance)).toLocaleString("id-ID")}
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-mono">
+                                ({totalDaysPresent} Hari × Rp {(rec?.dailyAllowance || globalAllowance).toLocaleString("id-ID")})
+                              </div>
+                              <span className="inline-block mt-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">
+                                Cair Jumat
+                              </span>
                             </td>
 
                             <td className="py-3.5 px-3 text-center">
@@ -7511,27 +7640,30 @@ export function AbsensiHarianNmsa({
                                 <button
                                   type="button"
                                   onClick={() => setShowSignatureModal(true)}
-                                  className="group inline-flex flex-col items-center gap-0.5 p-1 hover:bg-indigo-50/80 rounded-lg border border-emerald-200 bg-emerald-50/50 transition cursor-pointer"
-                                  title="Paraf sah tersimpan (Klik untuk melihat atau mengubah di Studio Paraf)"
+                                  className="group inline-flex flex-col items-center gap-0.5 p-1 hover:bg-emerald-100/70 rounded-lg border border-emerald-300 bg-emerald-50/70 transition cursor-pointer"
+                                  title="Paraf otomatis hari Jumat sah tersimpan (Klik untuk melihat atau mengubah di Studio Paraf)"
                                 >
                                   <img 
                                     src={signatures[worker.id]} 
                                     alt="Paraf" 
-                                    className="h-5 max-w-[65px] object-contain mix-blend-multiply" 
+                                    className="h-5.5 max-w-[70px] object-contain mix-blend-multiply" 
                                   />
-                                  <span className="text-[9px] font-extrabold text-emerald-700 flex items-center gap-0.5">
-                                    <Check className="w-2.5 h-2.5" /> Sah
+                                  <span className="text-[9px] font-extrabold text-emerald-800 flex items-center gap-0.5">
+                                    <Check className="w-2.5 h-2.5" /> TTD Sah Jumat
                                   </span>
                                 </button>
                               ) : (
                                 <button
                                   type="button"
-                                  onClick={() => setShowSignatureModal(true)}
-                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-indigo-700 bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 px-2.5 py-1 rounded-lg transition cursor-pointer"
-                                  title="Goreskan paraf digital untuk karyawan ini"
+                                  onClick={() => {
+                                    const autoSig = generateWorkerAutoSignature(worker.name);
+                                    handleSaveSignature(worker.id, autoSig);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-lg transition cursor-pointer"
+                                  title="Buat tanda tangan otomatis Jumat"
                                 >
-                                  <PenTool className="w-3 h-3 text-slate-400 group-hover:text-indigo-600" />
-                                  <span>✍️ Paraf</span>
+                                  <PenTool className="w-3 h-3 text-emerald-600" />
+                                  <span>Auto TTD</span>
                                 </button>
                               )}
                             </td>

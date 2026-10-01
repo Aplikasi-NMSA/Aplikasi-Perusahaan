@@ -162,6 +162,10 @@ html, body {
     size: A4 landscape;
     margin: 10mm 12mm 10mm 12mm;
   }
+  @page submissions-ledger-page {
+    size: A4 landscape;
+    margin: 8mm 8mm 8mm 8mm;
+  }
   html, body, #app-root, main, #submissions-list-container {
     display: block !important;
     height: auto !important;
@@ -319,6 +323,24 @@ html, body {
   .print-only-container {
     display: block !important;
     visibility: visible !important;
+    page: submissions-ledger-page !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+  #printable-submissions-table table {
+    table-layout: fixed !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  #printable-submissions-table th,
+  #printable-submissions-table td {
+    overflow-wrap: break-word !important;
+    word-break: break-word !important;
+    box-sizing: border-box !important;
   }
   table {
     page-break-inside: auto !important;

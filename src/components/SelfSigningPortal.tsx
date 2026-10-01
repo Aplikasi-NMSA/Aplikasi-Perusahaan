@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Worker, AttendanceRecord } from "../types";
 import { SignaturePad } from "./SignaturePad";
+import { generateWorkerAutoSignature } from "../lib/attendanceSheetGenerator";
 
 interface SelfSigningPortalProps {
   worker: Worker;
@@ -35,7 +36,9 @@ export function SelfSigningPortal({
   onSaveSignature,
   onClose
 }: SelfSigningPortalProps) {
-  const [signatureDraft, setSignatureDraft] = useState<string | null>(existingSignature || null);
+  const [signatureDraft, setSignatureDraft] = useState<string | null>(() => {
+    return existingSignature || generateWorkerAutoSignature(worker.name) || null;
+  });
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
 
@@ -172,8 +175,48 @@ export function SelfSigningPortal({
                   <span className="text-slate-300 font-mono text-[11px]">{weekStart} s/d {weekEnd}</span>
                 </div>
                 <div className="text-right">
-                  <span className="text-[10px] text-slate-500 block">Total Hak Uang Makan:</span>
-                  <span className="text-emerald-400 font-bold font-mono">
+                  <span className="text-[10px] text-slate-500 block">Tarif Uang Makan:</span>
+                  <span className="text-slate-300 font-mono text-[11px]">
+                    Rp {dailyAllowance.toLocaleString("id-ID")}/Hari
+                  </span>
+                </div>
+              </div>
+
+              {/* Day-by-day attendance from Monday to Friday */}
+              <div className="border-t border-slate-800/80 pt-2.5 space-y-2">
+                <span className="text-[10px] text-slate-400 block font-semibold">
+                  Presensi Masuk dari Hari Senin s.d. Jumat:
+                </span>
+                <div className="grid grid-cols-5 gap-1.5 text-center">
+                  {weekDates.map((dateStr, idx) => {
+                    const dayNames = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
+                    const isPresent = !!attendanceRecord?.attendance?.[dateStr];
+                    const cStatus = attendanceRecord?.customStatus?.[dateStr];
+                    const isEligible = isPresent && cStatus !== "Meeting" && cStatus !== "Izin" && cStatus !== "Sakit" && cStatus !== "Absen";
+                    return (
+                      <div key={dateStr} className={`p-1.5 rounded-lg border text-[10px] ${
+                        isEligible 
+                          ? "bg-emerald-950/60 border-emerald-500/40 text-emerald-300 font-bold" 
+                          : "bg-slate-900 border-slate-800 text-slate-500"
+                      }`}>
+                        <div className="text-[9px] text-slate-400">{dayNames[idx] || "Hari"}</div>
+                        <div className="font-bold">{isEligible ? "✓ Hadir" : (cStatus || "-")}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Friday Payout Highlight */}
+              <div className="bg-emerald-950/50 border border-emerald-500/30 rounded-xl p-3 flex justify-between items-center text-xs">
+                <div>
+                  <span className="text-[10px] text-emerald-300 block font-bold">Uang Diterima Hari Jumat:</span>
+                  <span className="text-[11px] text-slate-300 font-mono">
+                    {daysPresent} Hari Hadir × Rp {dailyAllowance.toLocaleString("id-ID")}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-base font-black font-mono text-emerald-400">
                     Rp {totalAllowance.toLocaleString("id-ID")}
                   </span>
                 </div>
