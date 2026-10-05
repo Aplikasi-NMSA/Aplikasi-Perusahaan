@@ -2164,7 +2164,7 @@
       "submissionCode": "BKK-NMSA/VIII/26/1036"
     }
   ],
-  "attendancePin": "1446",
+  "attendancePin": "8760",
   "signatures": {},
   "pettyCashHolders": [
     "Suryo Pranoto",
@@ -29533,7 +29533,18 @@
   "adminUsername": "admin",
   "adminPassword": "admin123",
   "adminToken": "c82bbb9c-0fdf-4204-a16a-154bd888762d",
-  "lastPinDate": "2026-09-30",
+  "lastPinDate": "2026-10-05",
   "bankStatements": [],
-  "internalMemos": []
+  "internalMemos": [],
+  "autoReminderEnabled": true,
+  "reminderActiveDays": [
+    "Senin",
+    "Selasa",
+    "Rabu",
+    "Kamis",
+    "Jumat"
+  ],
+  "requireFridaySignature": true,
+  "fridayVerifications": {},
+  "lastHostOrigin": "http://localhost:3000"
 }

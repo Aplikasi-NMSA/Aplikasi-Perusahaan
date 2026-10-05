@@ -264,6 +264,7 @@ export function createInitialMemo(
       companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
       companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
       useImageHeader: true, // Always use banner kop surat as requested
+      includeBankDetails: true,
       createdAt: new Date().toISOString(),
     };
   }
@@ -281,6 +282,7 @@ export function createInitialMemo(
     bankName: 'Bank Mandiri',
     accountNumber: '1030013139064',
     accountHolder: 'PT. Nusantara Mineral Sukses Abadi',
+    includeBankDetails: true,
     penutup: 'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
     salamPenutup: 'Hormat Saya',
     penandatanganNama: 'Andi Muhammad Rifki',

@@ -737,8 +737,56 @@ export function AbsensiHarianNmsa({
     );
   };
 
-  // --- Google Drive Auto-Backup States ---
+  // --- Google Drive Auto-Backup & Comprehensive Settings States ---
   const [showAutoBackupModal, setShowAutoBackupModal] = useState<boolean>(false);
+  const [showSystemSettingsModal, setShowSystemSettingsModal] = useState<boolean>(false);
+  const [settingsTab, setSettingsTab] = useState<'schedule' | 'allowance' | 'attendance' | 'danger'>('schedule');
+  const [driveUploadHour, setDriveUploadHour] = useState<string>(() => {
+    return googleDriveAutoBackup.getSettings().uploadHour || '17:00';
+  });
+  const [geoRadiusSetting, setGeoRadiusSetting] = useState<string>(() => {
+    return localStorage.getItem("office_geo_radius") || "100";
+  });
+  // Additional comprehensive attendance rules
+  const [workStartTime, setWorkStartTime] = useState<string>(() => {
+    return localStorage.getItem("app_work_start_time") || "08:00";
+  });
+  const [workEndTime, setWorkEndTime] = useState<string>(() => {
+    return localStorage.getItem("app_work_end_time") || "17:00";
+  });
+  const [lateToleranceMinutes, setLateToleranceMinutes] = useState<string>(() => {
+    return localStorage.getItem("app_late_tolerance_mins") || "30";
+  });
+  const [cutoffHour, setCutoffHour] = useState<string>(() => {
+    return localStorage.getItem("app_cutoff_hour") || "14:00";
+  });
+  const [requireDailyPin, setRequireDailyPin] = useState<boolean>(() => {
+    return localStorage.getItem("app_require_daily_pin") !== "false";
+  });
+  const [workDaysMode, setWorkDaysMode] = useState<string>(() => {
+    return localStorage.getItem("app_work_days_mode") || "5_days";
+  });
+  const [workerSearchQuery, setWorkerSearchQuery] = useState<string>("");
+  const [workerFilterTab, setWorkerFilterTab] = useState<"all" | "active" | "inactive">("all");
+
+  useEffect(() => {
+    localStorage.setItem("app_work_start_time", workStartTime);
+  }, [workStartTime]);
+  useEffect(() => {
+    localStorage.setItem("app_work_end_time", workEndTime);
+  }, [workEndTime]);
+  useEffect(() => {
+    localStorage.setItem("app_late_tolerance_mins", lateToleranceMinutes);
+  }, [lateToleranceMinutes]);
+  useEffect(() => {
+    localStorage.setItem("app_cutoff_hour", cutoffHour);
+  }, [cutoffHour]);
+  useEffect(() => {
+    localStorage.setItem("app_require_daily_pin", String(requireDailyPin));
+  }, [requireDailyPin]);
+  useEffect(() => {
+    localStorage.setItem("app_work_days_mode", workDaysMode);
+  }, [workDaysMode]);
   const [autoBackupSettings, setAutoBackupSettings] = useState<DriveAutoBackupSettings>(() => googleDriveAutoBackup.getSettings());
   const [autoBackupLogs, setAutoBackupLogs] = useState<BackupSyncLog[]>(() => googleDriveAutoBackup.getLogs());
   const [isDriveAutoSyncing, setIsDriveAutoSyncing] = useState<boolean>(false);
@@ -2428,7 +2476,7 @@ export function AbsensiHarianNmsa({
 
   const handleSelfSubmitAttendance = async () => {
     if (!selfWorker) return;
-    if (!selfInputPin.trim()) {
+    if (requireDailyPin && !selfInputPin.trim()) {
       setSelfAttendStatus("error");
       setSelfAttendMessage("PIN presensi harian wajib diisi.");
       return;
@@ -2455,7 +2503,7 @@ export function AbsensiHarianNmsa({
         body: JSON.stringify({ 
           workerId: selfWorker.id, 
           date: todayYMD, 
-          pin: selfInputPin,
+          pin: selfInputPin || attendancePin || "1234",
           latitude: userCoords.latitude,
           longitude: userCoords.longitude,
           signature: signatureToUse,
@@ -5258,24 +5306,26 @@ export function AbsensiHarianNmsa({
                       </div>
                     </div>
 
-                    {/* PIN INPUT FIELD */}
-                    <div className="max-w-xs mx-auto space-y-1 text-left">
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">PIN Presensi Harian</label>
-                      <div className="relative">
-                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
-                          <Lock className="w-4 h-4" />
-                        </span>
-                        <input
-                          type="password"
-                          inputMode="numeric"
-                          maxLength={6}
-                          placeholder="Masukkan PIN"
-                          value={selfInputPin}
-                          onChange={(e) => setSelfInputPin(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl py-2.5 pl-9 pr-4 text-sm text-center font-bold text-white tracking-widest placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
+                    {/* PIN INPUT FIELD (Only shown if enabled by admin policy) */}
+                    {requireDailyPin && (
+                      <div className="max-w-xs mx-auto space-y-1 text-left">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">PIN Presensi Harian</label>
+                        <div className="relative">
+                          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                            <Lock className="w-4 h-4" />
+                          </span>
+                          <input
+                            type="password"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="Masukkan PIN"
+                            value={selfInputPin}
+                            onChange={(e) => setSelfInputPin(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl py-2.5 pl-9 pr-4 text-sm text-center font-bold text-white tracking-widest placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <button
                       onClick={handleSelfSubmitAttendance}
@@ -9777,80 +9827,101 @@ export function AbsensiHarianNmsa({
                 <div>
                   <div className="flex items-center gap-3">
                     <h3 className="text-base font-bold text-slate-900 tracking-tight font-display">Daftar Karyawan Lapangan</h3>
-                    <button
-                      onClick={() => setShowAddWorkerModal(true)}
-                      className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-xs px-3 py-1.5 rounded-xl transition cursor-pointer shadow-md shadow-indigo-600/10"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Tambah Karyawan</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (window.confirm("Apakah Anda yakin ingin menghapus seluruh data karyawan? Tindakan ini tidak dapat dibatalkan.")) {
-                          setWorkers([]);
-                          localStorage.setItem("karyawan_uang_makan", JSON.stringify([]));
-                        }
-                      }}
-                      className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs px-3 py-1.5 rounded-xl transition cursor-pointer border border-rose-200"
-                      title="Kosongkan seluruh data karyawan lapangan"
-                    >
-                      <Trash className="w-3.5 h-3.5" />
-                      <span>Bersihkan Semua</span>
-                    </button>
+                    <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                      {workers.length} Karyawan ({workers.filter(w => w.isActive !== false).length} Aktif)
+                    </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">Daftar karyawan aktif yang berhak mendapatkan jatah uang makan harian.</p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* GLOBAL ALLOWANCE CONFIG */}
-                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1.5">
-                    <label className="text-[11px] font-semibold text-slate-600">Meal Allowance (Rp/Hari):</label>
-                    <input
-                      type="number"
-                      value={globalAllowance}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10) || 0;
-                        setGlobalAllowance(val);
-                        // Update active allowance records
-                        setAttendanceRecords(attendanceRecords.map(r => 
-                          r.attendance[weekStart] !== undefined ? { ...r, dailyAllowance: val } : r
-                        ));
-                      }}
-                      className="w-24 bg-white border border-slate-250 rounded-lg px-2 py-0.5 text-xs text-center font-bold text-slate-800 font-mono focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  {/* DAILY ATTENDANCE PIN CONFIG */}
-                  <div className="flex items-center gap-2 bg-indigo-50/60 border border-indigo-100 rounded-xl px-3 py-1.5">
-                    <Lock className="w-3.5 h-3.5 text-indigo-500" />
-                    <label className="text-[11px] font-semibold text-slate-600">PIN Harian:</label>
-                    <input
-                      type="text"
-                      maxLength={6}
-                      value={attendancePin}
-                      onChange={(e) => setAttendancePin(e.target.value.replace(/\D/g, ""))}
-                      className="w-16 bg-white border border-indigo-200 rounded-lg px-2 py-0.5 text-xs text-center font-bold text-indigo-700 font-mono focus:ring-1 focus:ring-indigo-500"
-                    />
-                    <button
-                      onClick={() => {
-                        const randPin = String(Math.floor(1000 + Math.random() * 9000));
-                        setAttendancePin(randPin);
-                      }}
-                      className="p-0.5 text-indigo-600 hover:text-indigo-800 transition rounded hover:bg-indigo-100/50"
-                      title="Acak PIN Baru"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    onClick={() => setShowAddWorkerModal(true)}
+                    className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shadow-md shadow-indigo-600/10"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Tambah Karyawan</span>
+                  </button>
 
                   {/* MASS WA BROADCAST BUTTON */}
                   <button
                     onClick={() => setShowBulkWA(true)}
                     className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shadow-md shadow-emerald-600/10"
                   >
-                    <MessageSquare className="w-3.5 h-3.5" />
+                    <MessageSquare className="w-4 h-4" />
                     <span>Bagikan Link Massal (WA)</span>
                   </button>
+
+                  {/* TOMBOL PENGATURAN IKON GEAR */}
+                  <button
+                    onClick={() => setShowSystemSettingsModal(true)}
+                    className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shadow-sm hover:shadow"
+                    title="Buka Pengaturan Jam Pesan Massal, Upload Google Drive, Uang Makan & Presensi"
+                  >
+                    <Settings className="w-4 h-4 text-amber-400" />
+                    <span>Pengaturan</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* TOOLBAR KONTROL & PENGATURAN MENU KARYAWAN */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 bg-slate-50/80 p-3 rounded-xl border border-slate-200">
+                {/* Status Filter Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setWorkerFilterTab("all")}
+                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                      workerFilterTab === "all"
+                        ? "bg-indigo-600 text-white shadow-xs font-bold"
+                        : "bg-white text-slate-600 hover:text-slate-900 border border-slate-200"
+                    }`}
+                  >
+                    Semua ({workers.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWorkerFilterTab("active")}
+                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                      workerFilterTab === "active"
+                        ? "bg-emerald-600 text-white shadow-xs font-bold"
+                        : "bg-white text-slate-600 hover:text-slate-900 border border-slate-200"
+                    }`}
+                  >
+                    Aktif ({workers.filter(w => w.isActive !== false).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWorkerFilterTab("inactive")}
+                    className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                      workerFilterTab === "inactive"
+                        ? "bg-slate-700 text-white shadow-xs font-bold"
+                        : "bg-white text-slate-600 hover:text-slate-900 border border-slate-200"
+                    }`}
+                  >
+                    Non-aktif ({workers.filter(w => w.isActive === false).length})
+                  </button>
+                </div>
+
+                {/* Search Input */}
+                <div className="relative flex-1 max-w-xs">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Cari nama, ID, atau No. WA..."
+                    value={workerSearchQuery}
+                    onChange={(e) => setWorkerSearchQuery(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
+                  />
+                  {workerSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setWorkerSearchQuery("")}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs cursor-pointer font-bold"
+                    >
+                      &times;
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -9865,7 +9936,40 @@ export function AbsensiHarianNmsa({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {workers.map((worker) => (
+                    {(() => {
+                      const displayedWorkers = workers.filter((worker) => {
+                        if (workerFilterTab === "active" && worker.isActive === false) return false;
+                        if (workerFilterTab === "inactive" && worker.isActive !== false) return false;
+                        if (workerSearchQuery.trim()) {
+                          const q = workerSearchQuery.toLowerCase();
+                          const matchName = worker.name?.toLowerCase().includes(q);
+                          const matchId = worker.id?.toLowerCase().includes(q);
+                          const matchPhone = worker.phoneNumber?.replace(/[^0-9]/g, "").includes(q.replace(/[^0-9]/g, ""));
+                          if (!matchName && !matchId && !matchPhone) return false;
+                        }
+                        return true;
+                      });
+
+                      if (displayedWorkers.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={4} className="py-12 text-center text-slate-400 text-xs">
+                              <p className="font-semibold text-slate-600">Tidak ada data karyawan yang sesuai kriteria pencarian atau filter.</p>
+                              {workerSearchQuery && (
+                                <button
+                                  type="button"
+                                  onClick={() => setWorkerSearchQuery("")}
+                                  className="mt-2 text-indigo-600 hover:underline font-bold text-xs cursor-pointer"
+                                >
+                                  Bersihkan Kata Kunci Pencarian
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return displayedWorkers.map((worker) => (
                       <tr key={worker.id} className="hover:bg-slate-50/50">
                         <td className="py-3.5 px-4">
                           <div className="flex items-center gap-3">
@@ -10008,7 +10112,7 @@ export function AbsensiHarianNmsa({
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    ))})()}
                   </tbody>
                 </table>
               </div>
@@ -10114,6 +10218,625 @@ export function AbsensiHarianNmsa({
 
           </div>
         )}
+
+        {/* MODAL PENGATURAN SISTEM (IKON GEAR) */}
+        <AnimatePresence>
+          {showSystemSettingsModal && (
+            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]"
+              >
+                {/* Header */}
+                <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 px-6 py-4 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-2xl">
+                      <Settings className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-white font-display text-base">
+                        Pengaturan Sistem &amp; Otomasi Absensi
+                      </h3>
+                      <p className="text-xs text-slate-300">
+                        Konfigurasi jam pengiriman pesan massal, upload Google Drive, uang makan &amp; presensi
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowSystemSettingsModal(false)}
+                    className="p-1.5 rounded-xl hover:bg-white/20 text-slate-300 hover:text-white transition cursor-pointer"
+                  >
+                    &times;
+                  </button>
+                </div>
+
+                {/* Sub-Tabs Navigation */}
+                <div className="flex border-b border-slate-200 bg-slate-50 px-6 pt-3 gap-2 overflow-x-auto">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab('schedule')}
+                    className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      settingsTab === 'schedule'
+                        ? 'border-indigo-600 text-indigo-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Jadwal &amp; Jam Otomatis</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab('allowance')}
+                    className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      settingsTab === 'allowance'
+                        ? 'border-indigo-600 text-indigo-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <DollarSign className="w-3.5 h-3.5" />
+                    <span>Uang Makan Harian</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab('attendance')}
+                    className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      settingsTab === 'attendance'
+                        ? 'border-indigo-600 text-indigo-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span>Presensi &amp; Aturan Absen</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab('danger')}
+                    className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      settingsTab === 'danger'
+                        ? 'border-rose-600 text-rose-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Trash className="w-3.5 h-3.5" />
+                    <span>Data Karyawan</span>
+                  </button>
+                </div>
+
+                {/* Body Content */}
+                <div className="p-6 overflow-y-auto space-y-6 text-sm flex-1">
+                  {/* TAB 1: JADWAL & JAM OTOMATIS */}
+                  {settingsTab === 'schedule' && (
+                    <div className="space-y-6 animate-in fade-in duration-150">
+                      {/* Section 1: Pengiriman Pesan Massal WA */}
+                      <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-200/80 space-y-3.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-indigo-600 text-white rounded-xl">
+                              <MessageSquare className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                                1. Jam Mulai Pengiriman Pesan Massal (WA Bot)
+                              </h4>
+                              <p className="text-[11px] text-slate-500">
+                                Jam berapa pengingat harian otomatis dikirimkan ke seluruh nomor WA karyawan
+                              </p>
+                            </div>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                            autoReminderEnabled
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : 'bg-slate-100 text-slate-600 border border-slate-300'
+                          }`}>
+                            {autoReminderEnabled ? 'Aktif' : 'Nonaktif'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">Waktu / Jam Pengiriman:</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="time"
+                                value={autoReminderHour}
+                                onChange={(e) => {
+                                  const newHour = e.target.value;
+                                  setAutoReminderHour(newHour);
+                                  localStorage.setItem("wa_auto_reminder_hour", newHour);
+                                }}
+                                className="bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold text-slate-900 font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none w-full shadow-2xs"
+                              />
+                            </div>
+                            {/* Quick Presets */}
+                            <div className="flex items-center gap-1.5 pt-1 overflow-x-auto">
+                              {['07:00', '07:30', '08:00', '08:30', '09:00'].map((preset) => (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => {
+                                    setAutoReminderHour(preset);
+                                    localStorage.setItem("wa_auto_reminder_hour", preset);
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition cursor-pointer border ${
+                                    autoReminderHour === preset
+                                      ? 'bg-indigo-600 text-white border-indigo-700'
+                                      : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                                  }`}
+                                >
+                                  {preset}
+                                </button>
+                              ))}
+                            </div>
+                            <span className="text-[10px] text-slate-500">Waktu Indonesia Barat (WIB) / Zona Lokal</span>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">Status Otomasi Pesan:</label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextVal = !autoReminderEnabled;
+                                setAutoReminderEnabled(nextVal);
+                                localStorage.setItem("wa_auto_reminder_enabled", nextVal ? "true" : "false");
+                              }}
+                              className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer border ${
+                                autoReminderEnabled
+                                  ? 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              <CheckCircle className="w-4 h-4" />
+                              <span>{autoReminderEnabled ? 'Pengingat Otomatis Aktif' : 'Klik untuk Aktifkan'}</span>
+                            </button>
+                            <span className="text-[10px] text-slate-500">Kirim serentak ke seluruh karyawan aktif yang belum absen</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/80 p-2.5 rounded-xl border border-indigo-100 text-[11px] text-slate-600 leading-relaxed">
+                          💡 <strong>Cara Kerja:</strong> Pada jam <strong>{autoReminderHour} WIB</strong> setiap hari kerja, bot otomatis mendeteksi siapa saja karyawan yang belum check-in dan mengirimkan tautan presensi mandiri mereka langsung ke WhatsApp masing-masing.
+                        </div>
+                      </div>
+
+                      {/* Section 2: Jadwal Upload Otomatis Google Drive */}
+                      <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 space-y-3.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-emerald-600 text-white rounded-xl">
+                              <CloudUpload className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                                2. Jam Upload / Cadangan Otomatis ke Google Drive
+                              </h4>
+                              <p className="text-[11px] text-slate-500">
+                                Jam berapa aplikasi otomatis mengarsipkan berkas absensi ke Google Drive
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            Cloud Terhubung
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">Waktu / Jam Upload Harian:</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="time"
+                                value={driveUploadHour}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDriveUploadHour(val);
+                                  googleDriveAutoBackup.saveSettings({ uploadHour: val });
+                                  setAutoBackupSettings(googleDriveAutoBackup.getSettings());
+                                }}
+                                className="bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold text-slate-900 font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none w-full shadow-2xs"
+                              />
+                            </div>
+                            {/* Quick Presets for Drive Upload */}
+                            <div className="flex items-center gap-1.5 pt-1 overflow-x-auto">
+                              {['16:00', '16:30', '17:00', '17:30', '18:00', '19:00'].map((preset) => (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => {
+                                    setDriveUploadHour(preset);
+                                    googleDriveAutoBackup.saveSettings({ uploadHour: preset });
+                                    setAutoBackupSettings(googleDriveAutoBackup.getSettings());
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition cursor-pointer border ${
+                                    driveUploadHour === preset
+                                      ? 'bg-emerald-600 text-white border-emerald-700'
+                                      : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                                  }`}
+                                >
+                                  {preset}
+                                </button>
+                              ))}
+                            </div>
+                            <span className="text-[10px] text-slate-500">Direkomendasikan saat akhir jam kerja (17:00 / 18:00 WIB)</span>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">Otomasi Cadangan Harian:</label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextVal = !autoBackupSettings.autoSyncAbsen;
+                                googleDriveAutoBackup.saveSettings({ autoSyncAbsen: nextVal });
+                                setAutoBackupSettings(googleDriveAutoBackup.getSettings());
+                              }}
+                              className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer border ${
+                                autoBackupSettings.autoSyncAbsen
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              <ShieldCheck className="w-4 h-4" />
+                              <span>{autoBackupSettings.autoSyncAbsen ? 'Upload Otomatis Aktif' : 'Upload Dinonaktifkan'}</span>
+                            </button>
+                            <span className="text-[10px] text-slate-500">Folder: ABSENSI-NMSA-APP / Cadangan-Data-Absensi</span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-emerald-100">
+                          <button
+                            type="button"
+                            disabled={isDriveAutoSyncing}
+                            onClick={async () => {
+                              setIsDriveAutoSyncing(true);
+                              try {
+                                const res = await googleDriveAutoBackup.backupAbsensi({
+                                  exportDate: new Date().toISOString(),
+                                  records: attendanceRecords,
+                                  workers
+                                });
+                                if (res.success) {
+                                  alert("✓ Sukses! Berkas absensi harian dan bulanan berhasil diunggah dan diperbarui di Google Drive!");
+                                } else {
+                                  alert("Pemberitahuan: " + (res.error || "Gagal mengunggah ke Google Drive"));
+                                }
+                              } catch (err: any) {
+                                alert("Gagal mengunggah: " + err.message);
+                              } finally {
+                                setIsDriveAutoSyncing(false);
+                              }
+                            }}
+                            className="text-xs font-bold text-emerald-700 hover:text-emerald-900 underline flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <CloudUpload className="w-3.5 h-3.5" />
+                            <span>{isDriveAutoSyncing ? 'Sedang Mengunggah...' : 'Uji Cadangkan ke Google Drive Sekarang'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowSystemSettingsModal(false);
+                              setShowAutoBackupModal(true);
+                            }}
+                            className="text-[11px] font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                          >
+                            Lihat Log Riwayat Drive &rarr;
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 2: UANG MAKAN HARIAN */}
+                  {settingsTab === 'allowance' && (
+                    <div className="space-y-4 animate-in fade-in duration-150">
+                      <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <DollarSign className="w-4 h-4 text-amber-600" />
+                          <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                            Tarif Uang Makan Harian (Meal Allowance)
+                          </h4>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed">
+                          Tentukan besaran nominal uang makan default per hari kehadiran untuk seluruh karyawan lapangan PT. NMSA.
+                        </p>
+
+                        <div className="space-y-1.5 max-w-sm pt-2">
+                          <label className="text-xs font-bold text-slate-700">Nominal Uang Makan (Rp/Hari):</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">Rp</span>
+                            <input
+                              type="number"
+                              value={globalAllowance}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10) || 0;
+                                setGlobalAllowance(val);
+                                localStorage.setItem("global_allowance", String(val));
+                                setAttendanceRecords(attendanceRecords.map(r => ({
+                                  ...r,
+                                  dailyAllowance: val
+                                })));
+                              }}
+                              className="w-full bg-white border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-sm font-bold text-slate-900 font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none shadow-2xs"
+                              placeholder="25000"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-white/80 rounded-xl border border-amber-200/60 text-xs text-slate-600">
+                          Total tarif per hari saat ini: <strong>Rp {globalAllowance.toLocaleString('id-ID')} / hari kerja</strong>. Nilai ini otomatis menjadi acuan perhitungan pada formulir rekap uang makan mingguan hari Jumat.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 3: PRESENSI, JAM KERJA & ATURAN ABSEN LAINNYA */}
+                  {settingsTab === 'attendance' && (
+                    <div className="space-y-5 animate-in fade-in duration-150">
+                      {/* JAM MASUK & PULANG KERJA STANDAR */}
+                      <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-200/70 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-indigo-600" />
+                          <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                            1. Jam Masuk &amp; Jam Pulang Kerja Standar
+                          </h4>
+                        </div>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          Jam operasional kantor &amp; lapangan untuk mendeteksi status ketepatan waktu hadir dan waktu checkout harian.
+                        </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-slate-700">Jam Masuk Standar:</label>
+                            <input
+                              type="time"
+                              value={workStartTime}
+                              onChange={(e) => setWorkStartTime(e.target.value)}
+                              className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-2xs"
+                            />
+                            <span className="text-[10px] text-slate-400">Default: 08:00 WIB</span>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-bold text-slate-700">Jam Pulang Kerja (Checkout):</label>
+                            <input
+                              type="time"
+                              value={workEndTime}
+                              onChange={(e) => setWorkEndTime(e.target.value)}
+                              className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-2xs"
+                            />
+                            <span className="text-[10px] text-slate-400">Default: 17:00 WIB</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* TOLERANSI KETERLAMBATAN & CUTOFF */}
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600" />
+                          <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                            2. Toleransi Keterlambatan &amp; Batas Akhir Presensi (Cut-Off)
+                          </h4>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-[11px] font-bold text-slate-700">Toleransi Waktu Keterlambatan:</label>
+                          <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+                            {[
+                              { label: '0 Menit (Tepat)', val: '0' },
+                              { label: '15 Menit', val: '15' },
+                              { label: '30 Menit', val: '30' },
+                              { label: '45 Menit', val: '45' },
+                              { label: '60 Menit', val: '60' },
+                            ].map((opt) => (
+                              <button
+                                key={opt.val}
+                                type="button"
+                                onClick={() => setLateToleranceMinutes(opt.val)}
+                                className={`py-1.5 px-2 rounded-lg text-xs font-bold transition text-center cursor-pointer border ${
+                                  lateToleranceMinutes === opt.val
+                                    ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
+                                    : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-250'
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1 pt-2">
+                          <label className="text-[11px] font-bold text-slate-700">Jam Batas Akhir Presensi Hari Ini (Cut-Off):</label>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="time"
+                              value={cutoffHour}
+                              onChange={(e) => setCutoffHour(e.target.value)}
+                              className="w-40 bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold font-mono text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-none shadow-2xs"
+                            />
+                            <span className="text-[10px] text-slate-500 leading-tight">
+                              Setelah jam ini, karyawan yang belum hadir akan ditandai terlambat/alpa pada rekap harian.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* HARI KERJA OPERASIONAL */}
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-indigo-600" />
+                          <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                            3. Hari Kerja Operasional Perusahaan
+                          </h4>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {[
+                            { id: '5_days', title: '5 Hari Kerja (Senin - Jumat)', desc: 'Sabtu & Minggu libur / uang makan rekap hari Jumat' },
+                            { id: '6_days', title: '6 Hari Kerja (Senin - Sabtu)', desc: 'Minggu libur / uang makan aktif hingga hari Sabtu' },
+                          ].map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => setWorkDaysMode(item.id)}
+                              className={`p-3 rounded-xl text-left border transition cursor-pointer flex flex-col justify-between ${
+                                workDaysMode === item.id
+                                  ? 'bg-indigo-50 border-indigo-400 text-indigo-950 shadow-xs'
+                                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-250'
+                              }`}
+                            >
+                              <span className="font-bold text-xs">{item.title}</span>
+                              <span className="text-[10px] text-slate-500 mt-1">{item.desc}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* KEBIJAKAN PIN HARIAN */}
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Lock className="w-4 h-4 text-indigo-600" />
+                            <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                              4. Kebijakan PIN Harian Presensi Mandiri
+                            </h4>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setRequireDailyPin(!requireDailyPin)}
+                            className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer border ${
+                              requireDailyPin
+                                ? 'bg-indigo-600 text-white border-indigo-700'
+                                : 'bg-slate-200 text-slate-700 border-slate-300'
+                            }`}
+                          >
+                            {requireDailyPin ? 'PIN Wajib' : 'Bebas Tanpa PIN'}
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          {requireDailyPin
+                            ? 'Karyawan diwajibkan memasukkan PIN harian sebelum presensi tercatat di sistem.'
+                            : 'Karyawan dapat langsung menekan tombol absen tanpa perlu mengetikkan PIN harian.'}
+                        </p>
+
+                        {requireDailyPin && (
+                          <div className="flex items-center gap-3 pt-1">
+                            <input
+                              type="text"
+                              maxLength={6}
+                              value={attendancePin}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, "");
+                                setAttendancePin(val);
+                              }}
+                              className="w-28 bg-white border border-slate-300 rounded-xl px-3 py-2 text-center text-sm font-bold text-indigo-700 font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none shadow-2xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const randPin = String(Math.floor(1000 + Math.random() * 9000));
+                                setAttendancePin(randPin);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition border border-indigo-200 cursor-pointer"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Acak PIN Baru</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* RADIUS GPS LOKASI */}
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-4 h-4 text-emerald-600" />
+                          <h4 className="font-bold text-slate-900 text-xs sm:text-sm">
+                            5. Toleransi Radius Lokasi Kantor (GPS)
+                          </h4>
+                        </div>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          Jarak maksimal yang diperbolehkan saat karyawan melakukan verifikasi lokasi koordinat kantor di Wisma NMSA.
+                        </p>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                          {[
+                            { label: '50 Meter', val: '50' },
+                            { label: '100 Meter (Standar)', val: '100' },
+                            { label: '250 Meter', val: '250' },
+                            { label: 'Bebas / Lapangan', val: '99999' }
+                          ].map((opt) => (
+                            <button
+                              key={opt.val}
+                              type="button"
+                              onClick={() => {
+                                setGeoRadiusSetting(opt.val);
+                                localStorage.setItem("office_geo_radius", opt.val);
+                              }}
+                              className={`py-2 px-2.5 rounded-xl text-xs font-bold transition text-center cursor-pointer border ${
+                                geoRadiusSetting === opt.val
+                                  ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
+                                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-250'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 4: DATA KARYAWAN */}
+                  {settingsTab === 'danger' && (
+                    <div className="space-y-4 animate-in fade-in duration-150">
+                      <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Trash className="w-4 h-4 text-rose-600" />
+                          <h4 className="font-bold text-rose-950 text-xs sm:text-sm">
+                            Tindakan Berbahaya: Reset Seluruh Karyawan
+                          </h4>
+                        </div>
+                        <p className="text-xs text-rose-800 leading-relaxed">
+                          Tindakan ini akan mengosongkan seluruh daftar karyawan lapangan ({workers.length} data karyawan). Pastikan Anda telah memiliki cadangan data sebelum melanjutkan.
+                        </p>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm("PERINGATAN: Apakah Anda yakin ingin mengosongkan SELURUH data karyawan lapangan? Tindakan ini tidak dapat dibatalkan.")) {
+                              setWorkers([]);
+                              localStorage.setItem("karyawan_uang_makan", JSON.stringify([]));
+                              setShowSystemSettingsModal(false);
+                            }
+                          }}
+                          className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Trash className="w-3.5 h-3.5" />
+                          <span>Kosongkan / Bersihkan Semua Karyawan</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="bg-slate-50 border-t border-slate-200 px-6 py-3.5 flex items-center justify-between">
+                  <span className="text-[11px] text-slate-500">
+                    Perubahan langsung tersimpan otomatis di perangkat Anda &amp; sistem.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSystemSettingsModal(false)}
+                    className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition cursor-pointer shadow-xs"
+                  >
+                    Tutup Pengaturan
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* MODAL PENGATURAN CADANGAN OTOMATIS GOOGLE DRIVE */}
         <AnimatePresence>
@@ -11006,17 +11729,17 @@ export function AbsensiHarianNmsa({
                     })()
                   ) : (
                     <>
-                      {/* Info Warning */}
-                      <div className="p-4 bg-amber-50 border border-amber-200/80 rounded-xl text-xs text-amber-800 space-y-2">
-                        <div className="font-bold flex items-center gap-1.5 text-amber-900">
-                          <AlertCircle className="w-4.5 h-4.5 text-amber-600" />
-                          <span>Sistem Keamanan PIN Aktif & Pilihan Metode Pengiriman</span>
+                      {/* Info Petunjuk Pengiriman */}
+                      <div className="p-4 bg-indigo-50/70 border border-indigo-200/80 rounded-xl text-xs text-indigo-950 space-y-2">
+                        <div className="font-bold flex items-center gap-1.5 text-indigo-900">
+                          <MessageSquare className="w-4.5 h-4.5 text-indigo-600" />
+                          <span>Petunjuk &amp; Pilihan Metode Pengiriman Link Absensi</span>
                         </div>
-                        <p className="leading-relaxed">
-                          Link absensi di bawah ini membutuhkan PIN Harian <strong className="font-mono text-amber-950 bg-amber-100 px-1.5 py-0.5 rounded">{attendancePin}</strong> agar karyawan dapat melakukan check-in.
+                        <p className="leading-relaxed text-slate-700">
+                          Tautan absensi mandiri di bawah ini dapat dibagikan kepada seluruh karyawan lapangan untuk pencatatan kehadiran dan jatah uang makan harian.
                         </p>
-                        <p className="leading-relaxed bg-white/60 p-2.5 rounded-lg border border-amber-100 text-[11px] text-slate-700">
-                          💡 <strong>Tips Hemat Waktu:</strong> Pilih <strong>Aplikasi PC</strong> di bawah ini agar saat tombol diklik, browser tidak membuka tab baru melainkan langsung meluncurkan aplikasi WhatsApp Desktop Anda. Atau, gunakan tombol <strong>Salin Pesan</strong> untuk menyalin teks penuh beserta tautannya dan langsung menempelkannya (paste) ke WhatsApp tanpa membuka tab baru sama sekali!
+                        <p className="leading-relaxed bg-white/70 p-2.5 rounded-lg border border-indigo-100 text-[11px] text-slate-700">
+                          💡 <strong>Tips Hemat Waktu:</strong> Pilih <strong>Aplikasi PC</strong> di bawah ini agar saat tombol diklik, browser tidak membuka tab baru melainkan langsung meluncurkan aplikasi WhatsApp Desktop Anda. Atau gunakan tombol <strong>Salin Pesan</strong> untuk menyalin teks penuh beserta tautannya dan langsung menempelkannya (paste) ke WhatsApp tanpa membuka tab baru sama sekali!
                         </p>
                       </div>
 

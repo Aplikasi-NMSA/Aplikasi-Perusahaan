@@ -166,24 +166,26 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
           />
         </div>
 
-        {/* BANK DETAILS (Indented Persis Sesuai Posisi Word Image 3) */}
-        <div className="my-5 print:my-4 ml-10 sm:ml-20 print:ml-16 text-[11pt] print:text-[11pt] text-black space-y-1.5 print:space-y-1">
-          <div className="flex items-baseline">
-            <span className="w-36 font-normal text-black">Nama Bank</span>
-            <span className="w-6 font-bold">:</span>
-            <span className="font-bold text-black">{memo.bankName}</span>
+        {/* BANK DETAILS (Indented Persis Sesuai Posisi Word Image 3) - Dapat disembunyikan jika memo berupa surat biasa */}
+        {memo.includeBankDetails !== false && (
+          <div className="my-5 print:my-4 ml-10 sm:ml-20 print:ml-16 text-[11pt] print:text-[11pt] text-black space-y-1.5 print:space-y-1">
+            <div className="flex items-baseline">
+              <span className="w-36 font-normal text-black">Nama Bank</span>
+              <span className="w-6 font-bold">:</span>
+              <span className="font-bold text-black">{memo.bankName}</span>
+            </div>
+            <div className="flex items-baseline">
+              <span className="w-36 font-normal text-black">No Rekeing</span>
+              <span className="w-6 font-bold">:</span>
+              <span className="font-bold font-mono tracking-wider text-black">{memo.accountNumber}</span>
+            </div>
+            <div className="flex items-baseline">
+              <span className="w-36 font-normal text-black">Nama Rekening</span>
+              <span className="w-6 font-bold">:</span>
+              <span className="font-bold text-black">{memo.accountHolder}</span>
+            </div>
           </div>
-          <div className="flex items-baseline">
-            <span className="w-36 font-normal text-black">No Rekeing</span>
-            <span className="w-6 font-bold">:</span>
-            <span className="font-bold font-mono tracking-wider text-black">{memo.accountNumber}</span>
-          </div>
-          <div className="flex items-baseline">
-            <span className="w-36 font-normal text-black">Nama Rekening</span>
-            <span className="w-6 font-bold">:</span>
-            <span className="font-bold text-black">{memo.accountHolder}</span>
-          </div>
-        </div>
+        )}
 
         {/* CLOSING PARAGRAPH - Spasi Renggang Sesuai Word */}
         <div className="my-5 print:my-4 text-[11pt] print:text-[11pt] text-black leading-[1.15]">

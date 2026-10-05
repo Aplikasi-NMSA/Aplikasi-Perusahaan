@@ -502,6 +502,7 @@ export interface InternalMemo {
   bankName: string;
   accountNumber: string;
   accountHolder: string;
+  includeBankDetails?: boolean; // true = Tampilkan Rekening (Memo Pembayaran), false = Sembunyikan Rekening (Memo Surat Biasa)
   penutup: string;
   salamPenutup: string;
   penandatanganNama: string;

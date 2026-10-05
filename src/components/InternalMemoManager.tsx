@@ -59,6 +59,7 @@ import {
   ExternalLink,
   Loader2,
   Share2,
+  X,
 } from 'lucide-react';
 
 const COMMON_MEMO_SIGNERS = [
@@ -1328,102 +1329,163 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   placeholder="Sehubungan dengan akan dilakukannya kegiatan..."
                 />
                 <div className="flex justify-between text-[10px] text-stone-400 font-mono mt-0.5">
-                  <span>Pastikan berakhiran: "... dapat di transfer ke :"</span>
+                  <span>{currentMemo.includeBankDetails === false ? '📄 Mode Surat Biasa Aktif (tanpa rekening tujuan)' : 'Pastikan berakhiran: "... dapat di transfer ke :"'}</span>
                   <span>{currentMemo.isiSurat.replace(/<[^>]*>/g, '').length} karakter</span>
                 </div>
               </div>
 
               {/* Data No Rekening Dropdown & Master */}
               <div className="p-3.5 bg-amber-50/50 rounded-xl border border-amber-200/80 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <span className="text-xs font-black uppercase text-amber-950 flex items-center gap-1.5">
                     <CreditCard size={14} className="text-amber-700" />
                     Data Rekening Tujuan Transfer
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsBankModalOpen(true)}
-                    className="text-[11px] font-bold text-amber-800 hover:text-amber-950 underline flex items-center gap-1"
-                  >
-                    <Plus size={12} /> Kelola Master Rekening
-                  </button>
+
+                  {/* Toggle Button Seperti Penandatangan: Tampilkan Rekening vs Hilangkan Rekening */}
+                  <div className="inline-flex rounded-lg border border-stone-300 p-0.5 bg-stone-200/70 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          includeBankDetails: true,
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
+                        currentMemo.includeBankDetails !== false
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-700 hover:text-stone-900'
+                      }`}
+                    >
+                      <Check size={12} />
+                      <span>Tampilkan Rekening</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          includeBankDetails: false,
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
+                        currentMemo.includeBankDetails === false
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-700 hover:text-stone-900'
+                      }`}
+                    >
+                      <X size={12} />
+                      <span>Hilangkan Rekening (Surat Biasa)</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Dropdown Rekening */}
-                <div>
-                  <label className="block text-[10px] font-bold text-stone-600 mb-1">
-                    Pilih Dari Daftar Rekening Tersimpan:
-                  </label>
-                  <select
-                    onChange={(e) => {
-                      const selected = bankAccounts.find((a) => a.id === e.target.value);
-                      if (selected) handleSelectBankAccount(selected);
-                    }}
-                    value={
-                      bankAccounts.find(
-                        (a) =>
-                          a.bankName === currentMemo.bankName &&
-                          a.accountNumber === currentMemo.accountNumber
-                      )?.id || ''
-                    }
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  >
-                    <option value="" disabled>
-                      -- Pilih Rekening Bank --
-                    </option>
-                    {bankAccounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.bankName} - {acc.accountNumber} ({acc.accountHolder})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {currentMemo.includeBankDetails !== false ? (
+                  <>
+                    <div className="flex items-center justify-between pt-1">
+                      <label className="block text-[10px] font-bold text-stone-600">
+                        Pilih Dari Daftar Rekening Tersimpan:
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setIsBankModalOpen(true)}
+                        className="text-[11px] font-bold text-amber-800 hover:text-amber-950 underline flex items-center gap-1"
+                      >
+                        <Plus size={12} /> Kelola Master Rekening
+                      </button>
+                    </div>
 
-                {/* Editable 3 fields for Bank */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  <div>
-                    <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
-                      Nama Bank
-                    </label>
-                    <input
-                      type="text"
-                      value={currentMemo.bankName}
-                      onChange={(e) =>
-                        setCurrentMemo((prev) => ({ ...prev, bankName: e.target.value }))
-                      }
-                      placeholder="Bank Mandiri"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                    />
+                    {/* Dropdown Rekening */}
+                    <div>
+                      <select
+                        onChange={(e) => {
+                          const selected = bankAccounts.find((a) => a.id === e.target.value);
+                          if (selected) handleSelectBankAccount(selected);
+                        }}
+                        value={
+                          bankAccounts.find(
+                            (a) =>
+                              a.bankName === currentMemo.bankName &&
+                              a.accountNumber === currentMemo.accountNumber
+                          )?.id || ''
+                        }
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                      >
+                        <option value="" disabled>
+                          -- Pilih Rekening Bank --
+                        </option>
+                        {bankAccounts.map((acc) => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.bankName} - {acc.accountNumber} ({acc.accountHolder})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Editable 3 fields for Bank */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
+                          Nama Bank
+                        </label>
+                        <input
+                          type="text"
+                          value={currentMemo.bankName}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({ ...prev, bankName: e.target.value }))
+                          }
+                          placeholder="Bank Mandiri"
+                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
+                          No. Rekening
+                        </label>
+                        <input
+                          type="text"
+                          value={currentMemo.accountNumber}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({ ...prev, accountNumber: e.target.value }))
+                          }
+                          placeholder="1030013139064"
+                          className="w-full px-2.5 py-1.5 text-xs font-mono font-bold bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
+                          Nama Rekening
+                        </label>
+                        <input
+                          type="text"
+                          value={currentMemo.accountHolder}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({ ...prev, accountHolder: e.target.value }))
+                          }
+                          placeholder="PT. Nusantara Mineral Sukses Abadi"
+                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="p-3 bg-stone-100/80 border border-stone-200 rounded-xl text-stone-700 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2">
+                      <FileText size={16} className="text-stone-500 shrink-0" />
+                      <span>
+                        <strong>Mode Surat Dinas / Biasa:</strong> Rincian nomor rekening tujuan disembunyikan dari berkas dan cetakan PDF memo ini.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentMemo((prev) => ({ ...prev, includeBankDetails: true }))}
+                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold shrink-0 transition"
+                    >
+                      Munculkan Rekening
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
-                      No. Rekening
-                    </label>
-                    <input
-                      type="text"
-                      value={currentMemo.accountNumber}
-                      onChange={(e) =>
-                        setCurrentMemo((prev) => ({ ...prev, accountNumber: e.target.value }))
-                      }
-                      placeholder="1030013139064"
-                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
-                      Nama Rekening
-                    </label>
-                    <input
-                      type="text"
-                      value={currentMemo.accountHolder}
-                      onChange={(e) =>
-                        setCurrentMemo((prev) => ({ ...prev, accountHolder: e.target.value }))
-                      }
-                      placeholder="PT. Nusantara Mineral Sukses Abadi"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                    />
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Signer Configuration Section (1, 2, or 3 Signers Sesuai Dokumen Word) */}

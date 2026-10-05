@@ -37,6 +37,7 @@ export interface DriveAutoBackupSettings {
   frequency: 'daily' | 'on_change_and_daily';
   lastBackupDate: string; // 'YYYY-MM-DD'
   lastBackupTime: string; // ISO
+  uploadHour?: string; // 'HH:mm', e.g. '17:00'
   notifyOnSuccess?: boolean;
   autoSyncAbsen: boolean;
   autoSyncSubmissions: boolean;
@@ -52,6 +53,7 @@ const DEFAULT_SETTINGS: DriveAutoBackupSettings = {
   frequency: 'on_change_and_daily',
   lastBackupDate: '',
   lastBackupTime: '',
+  uploadHour: '17:00',
   notifyOnSuccess: true,
   autoSyncAbsen: true,
   autoSyncSubmissions: true,
@@ -133,12 +135,21 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * Checks whether a daily backup is due today
+   * Checks whether a daily backup is due today based on configured uploadHour
    */
   public isBackupDueToday(): boolean {
     if (!this.settings.enabled) return false;
     const todayStr = new Date().toISOString().split('T')[0];
-    return this.settings.lastBackupDate !== todayStr;
+    if (this.settings.lastBackupDate === todayStr) return false;
+
+    // Check if current hour reached the configured uploadHour (e.g. '17:00')
+    const targetHourStr = this.settings.uploadHour || '17:00';
+    const [targetH, targetM] = targetHourStr.split(':').map((v) => parseInt(v, 10) || 0);
+    const now = new Date();
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+    const targetMins = targetH * 60 + targetM;
+
+    return currentMins >= targetMins;
   }
 
   /**
