@@ -75,6 +75,7 @@ interface InternalMemoManagerProps {
   initialSubmissionForMemo?: Submission | null;
   onBackToList: () => void;
   userProfile?: any;
+  onCreateVoucher?: (memo: InternalMemo) => void;
 }
 
 export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({

@@ -99,6 +99,7 @@ export interface Submission {
   // Signatures for Formulir Pengajuan
   dibuatOleh: string;
   disetujuiOleh: string; // e.g. "Harijon"
+  disetujuiJabatan?: string; // e.g. "Direktur Keuangan"
   diketahuiOleh?: string;
   companyId?: string;
   companyName?: string;
@@ -193,6 +194,9 @@ export interface AttendanceRecord {
   dailyAllowance: number; // e.g. Rp 50.000
   customStatus?: { [date: string]: "Sakit" | "Izin" | "Meeting" | "Cuti" | "Absen" | "Alpa" | string };
   reasons?: { [date: string]: string };
+  allowanceRate?: { [date: string]: number };
+  signatures?: { [date: string]: string };
+  notes?: { [date: string]: string };
 }
 
 export interface WeeklyReport {
