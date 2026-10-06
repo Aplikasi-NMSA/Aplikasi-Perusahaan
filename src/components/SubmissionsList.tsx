@@ -2,9 +2,10 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
+import { normalizeText } from '../utils/duplicateDetector';
 
 interface SubmissionsListProps {
   submissions: Submission[];
@@ -91,6 +92,34 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [dateFilter, setDateFilter] = useState<string>(() => {
     try { return sessionStorage.getItem('sublist_dateFilter') || ''; } catch (e) { return ''; }
   });
+
+  // Filter khusus untuk hanya menampilkan potensi voucher dobel input
+  const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
+
+  // Deteksi Potensi Double Input Lintas Seluruh Data Voucher (Penerima Sama & Nominal Sama)
+  const duplicateSubmissionIds = useMemo(() => {
+    const ids = new Set<string>();
+    const seenMap = new Map<string, string[]>();
+
+    submissions.forEach(sub => {
+      const total = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
+      const recipient = normalizeText(sub.dibayarkanKepada);
+      if (recipient && total > 0) {
+        const key = `${recipient}_${total}`;
+        const existing = seenMap.get(key) || [];
+        existing.push(sub.id);
+        seenMap.set(key, existing);
+      }
+    });
+
+    seenMap.forEach((matchedIds) => {
+      if (matchedIds.length > 1) {
+        matchedIds.forEach(id => ids.add(id));
+      }
+    });
+
+    return ids;
+  }, [submissions]);
 
   const [shareModalSub, setShareModalSub] = useState<Submission | null>(null);
   const [isCopiedShare, setIsCopiedShare] = useState(false);
@@ -475,7 +504,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         matchDate = yearFilter === 'All' && monthFilter === 'All' && !dateFilter;
       }
 
-      return matchSearch && matchMethod && matchStatus && matchDate;
+      const matchDuplicates = !showOnlyDuplicates || duplicateSubmissionIds.has(sub.id);
+
+      return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates;
     });
 
     // Sort descending by tanggal (latest date first), with logical tie-breakers
@@ -1273,6 +1304,25 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </button>
               </div>
 
+              {/* Quick Filter: Potensi Dobel Input */}
+              {duplicateSubmissionIds.size > 0 && (
+                <div className="self-end pb-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowOnlyDuplicates(prev => !prev)}
+                    title="Tampilkan hanya voucher yang terindikasi memiliki nama penerima & total nominal sama persis"
+                    className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs ${
+                      showOnlyDuplicates
+                        ? 'bg-amber-500 text-stone-950 font-black shadow-xs ring-2 ring-amber-400'
+                        : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300'
+                    }`}
+                  >
+                    <AlertTriangle size={13} className="text-amber-700" />
+                    <span>⚠️ Potensi Dobel ({duplicateSubmissionIds.size})</span>
+                  </button>
+                </div>
+              )}
+
               {/* Specific Date Picker Input */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Tanggal Spesifik</span>
@@ -1417,6 +1467,12 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                             {sub.isPettyCash && (
                               <span className="inline-block text-[9px] font-mono bg-violet-600 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase tracking-wider" title={`Custodian: ${sub.pettyCashCustodian}`}>
                                 Petty Cash
+                              </span>
+                            )}
+
+                            {duplicateSubmissionIds.has(sub.id) && (
+                              <span className="inline-block text-[9px] font-mono bg-amber-100 text-amber-900 border border-amber-300 font-black px-2 py-0.5 rounded-md shadow-3xs" title="Terdeteksi voucher lain dengan nama penerima dan nominal sama persis">
+                                ⚠️ Potensi Dobel
                               </span>
                             )}
 

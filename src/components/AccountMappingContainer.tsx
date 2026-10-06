@@ -19,6 +19,8 @@ interface AccountMappingContainerProps {
   userProfile?: any;
   pettyCashHolders?: string[];
   initialSubTab?: 'accurate' | 'sppd';
+  targetSubmission?: Submission | null;
+  onClearTargetSubmission?: () => void;
   onUpdatePettyCashHolders?: (holders: string[]) => void;
   onSaveSubmission?: (sub: Submission) => Promise<void> | void;
   onSelectSubmissionForView?: (sub: Submission) => void;
@@ -33,6 +35,8 @@ export function AccountMappingContainer({
   userProfile,
   pettyCashHolders = [],
   initialSubTab,
+  targetSubmission,
+  onClearTargetSubmission,
   onUpdatePettyCashHolders,
   onSaveSubmission,
   onSelectSubmissionForView,
@@ -42,6 +46,7 @@ export function AccountMappingContainer({
 }: AccountMappingContainerProps) {
   // Main sub-section tab: 'accurate' (Petty Cash) vs 'sppd' (Biaya Perjalanan Dinas)
   const [selectedSubTab, setSelectedSubTab] = useState<'accurate' | 'sppd'>(() => {
+    if (targetSubmission) return 'accurate';
     if (initialSubTab) return initialSubTab;
     try {
       const saved = sessionStorage.getItem('pemetaan_akun_sub_tab');
@@ -51,10 +56,12 @@ export function AccountMappingContainer({
   });
 
   useEffect(() => {
-    if (initialSubTab) {
+    if (targetSubmission) {
+      setSelectedSubTab('accurate');
+    } else if (initialSubTab) {
       setSelectedSubTab(initialSubTab);
     }
-  }, [initialSubTab]);
+  }, [targetSubmission, initialSubTab]);
 
   const handleSwitchTab = (tab: 'accurate' | 'sppd') => {
     setSelectedSubTab(tab);
@@ -151,6 +158,8 @@ export function AccountMappingContainer({
           submissions={submissions}
           userProfile={userProfile}
           pettyCashHolders={pettyCashHolders}
+          targetSubmission={targetSubmission}
+          onClearTargetSubmission={onClearTargetSubmission}
           onUpdatePettyCashHolders={onUpdatePettyCashHolders}
           onSaveSubmission={onSaveSubmission}
           onBack={onBack}

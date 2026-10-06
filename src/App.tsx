@@ -815,6 +815,7 @@ export default function App() {
   const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
 
   const [memoSubmissionTarget, setMemoSubmissionTarget] = useState<Submission | null>(null);
+  const [targetAccurateSubmission, setTargetAccurateSubmission] = useState<Submission | null>(null);
 
   const setView = (
     newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo',
@@ -3462,6 +3463,11 @@ export default function App() {
               setView('form');
             }}
             onOpenSppdEditor={() => handleOpenSppdEditor(activeSubmission)}
+            onNavigateToPettyCashMapping={(sub) => {
+              setTargetAccurateSubmission(sub);
+              setPreviousView('print');
+              setView('accurate', { preservePrevious: true });
+            }}
             onUpdateSubmission={(updated) => {
               setActiveSubmission(updated);
               const updatedList = submissions.map((s) => (s.id === updated.id ? updated : s));
@@ -3517,6 +3523,8 @@ export default function App() {
             submissions={submissions}
             userProfile={userProfile}
             pettyCashHolders={pettyCashHolders}
+            targetSubmission={targetAccurateSubmission}
+            onClearTargetSubmission={() => setTargetAccurateSubmission(null)}
             onUpdatePettyCashHolders={handleSavePettyCashHolders}
             onSaveSubmission={handleSaveSubmission}
             onSelectSubmissionForView={(sub) => {
@@ -3530,7 +3538,7 @@ export default function App() {
             onPostToVoucherHO={(sppd) => {
               handleImportSppdToSubmission(sppd);
             }}
-            onBack={() => setView('list')}
+            onBack={() => setView(previousView || 'list')}
           />
         )}
 

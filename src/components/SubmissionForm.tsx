@@ -16,6 +16,13 @@ import { SppdIntegration, SppdRecord } from './SppdIntegration';
 import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock, FolderKanban, Building2, CheckCircle2 } from 'lucide-react';
 import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput, checkIsHolidayOrWeekend, getNextWorkday, getPreviousWorkday, formatDateWithDayIndonesian, getDefaultTransactionDate, HolidayCheckResult, calculateTaxDueDate } from '../utils';
 import { areNamesSimilar, toTitleCase } from '../utils/nameConsolidation';
+import { 
+  findDuplicateItemIndices, 
+  removeDuplicateItems, 
+  findPotentialDuplicateSubmissions, 
+  DuplicateSubmissionMatch,
+  normalizeText 
+} from '../utils/duplicateDetector';
 
 interface SubmissionFormProps {
   initialSubmission?: Submission | null;
@@ -328,6 +335,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   // Modal konfirmasi peringatan tanggal merah saat simpan
   const [isHolidayConfirmModalOpen, setIsHolidayConfirmModalOpen] = useState(false);
   const [acknowledgedHolidayDates, setAcknowledgedHolidayDates] = useState<string[]>([]);
+  // Modal konfirmasi peringatan double input saat simpan
+  const [isDoubleInputConfirmModalOpen, setIsDoubleInputConfirmModalOpen] = useState(false);
+  const [acknowledgedDoubleInputKeys, setAcknowledgedDoubleInputKeys] = useState<string[]>([]);
   const [kode, setKode] = useState('HO');
   const [dibayarkanKepada, setDibayarkanKepada] = useState('');
   const [dibayarkanDengan, setDibayarkanDengan] = useState<PaymentMethod>('Cek/Transfer');
@@ -1298,6 +1308,54 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     }
   }, [calculatedGrandTotal, isInvoice, isInvoiceAmountCustom]);
 
+  // Deteksi Duplikat Item di Dalam Voucher yang Sama (Uraian & Nominal Sama)
+  const duplicateItemIndices = useMemo(() => {
+    return findDuplicateItemIndices(items);
+  }, [items]);
+
+  const handleCleanDuplicateItems = () => {
+    const { cleaned, removedCount } = removeDuplicateItems(items);
+    if (removedCount > 0) {
+      setItems(cleaned);
+      setValidationError('');
+    }
+  };
+
+  // Deteksi Potensi Double Input Lintas Voucher di Database (Nominal & Transaksi Sama)
+  const potentialDuplicateSubmissions = useMemo(() => {
+    return findPotentialDuplicateSubmissions(
+      {
+        dibayarkanKepada,
+        total: calculatedGrandTotal,
+        tanggal,
+        jenisPengajuan,
+        items,
+        id: initialSubmission?.id
+      },
+      submissions
+    );
+  }, [dibayarkanKepada, calculatedGrandTotal, tanggal, jenisPengajuan, items, initialSubmission, submissions]);
+
+  const currentDoubleInputKey = useMemo(() => {
+    if (potentialDuplicateSubmissions.length === 0) return '';
+    return `${normalizeText(dibayarkanKepada)}_${calculatedGrandTotal}_${potentialDuplicateSubmissions.map(m => m.submission.id).join('_')}`;
+  }, [dibayarkanKepada, calculatedGrandTotal, potentialDuplicateSubmissions]);
+
+  const hasUnacknowledgedDuplicates = potentialDuplicateSubmissions.length > 0 && !acknowledgedDoubleInputKeys.includes(currentDoubleInputKey);
+
+  const handleConfirmDoubleInputSave = async () => {
+    setIsDoubleInputConfirmModalOpen(false);
+    if (currentDoubleInputKey) {
+      setAcknowledgedDoubleInputKeys(prev => [...prev, currentDoubleInputKey]);
+    }
+    // Lanjutkan pengecekan hari libur atau langsung simpan
+    if (holidayInfo.isHolidayOrWeekend && !acknowledgedHolidayDates.includes(tanggal)) {
+      setIsHolidayConfirmModalOpen(true);
+      return;
+    }
+    await executeSave();
+  };
+
   // Form Submission Execution Logic
   const executeSave = async () => {
     if (isSubmittingRef.current) return;
@@ -2030,7 +2088,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     }
   };
 
-  // Form Submission Handler dengan Peringatan Hari Libur & Tanggal Merah
+  // Form Submission Handler dengan Peringatan Double Input, Hari Libur & Tanggal Merah
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -2044,7 +2102,13 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       return;
     }
 
-    // Intersepsi Hari Libur / Tanggal Merah / Akhir Pekan (Sabtu & Minggu)
+    // 1. Intersepsi Potensi Double Input (Transaksi & Nominal Sama di Database)
+    if (hasUnacknowledgedDuplicates) {
+      setIsDoubleInputConfirmModalOpen(true);
+      return;
+    }
+
+    // 2. Intersepsi Hari Libur / Tanggal Merah / Akhir Pekan (Sabtu & Minggu)
     if (holidayInfo.isHolidayOrWeekend && !acknowledgedHolidayDates.includes(tanggal)) {
       setIsHolidayConfirmModalOpen(true);
       return;
@@ -2434,6 +2498,58 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             />
           </div>
         </div>
+
+        {/* PROACTIVE WARNING BANNER: POTENSI DOUBLE INPUT LINTAS VOUCHER */}
+        {potentialDuplicateSubmissions.length > 0 && (
+          <div className="p-4 bg-amber-50/90 border-2 border-amber-400 rounded-2xl animate-fade-in shadow-xs my-3 font-sans">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide flex items-center gap-1.5">
+                    <span>⚠️ Terdeteksi Potensi Transaksi Dobel (Double Input)</span>
+                    <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full">
+                      {potentialDuplicateSubmissions.length} Data Mirip di Database
+                    </span>
+                  </h4>
+                </div>
+                <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                  Sistem mendeteksi transaksi dengan <strong>penerima dan nominal yang sama persis</strong> sudah pernah diinput sebelumnya. Harap periksa apakah transaksi ini sengaja diinput ulang atau tidak sengaja terdobel:
+                </p>
+                <div className="mt-2.5 space-y-2">
+                  {potentialDuplicateSubmissions.map((match, idx) => (
+                    <div key={idx} className="bg-white/90 border border-amber-300 rounded-xl p-2.5 text-xs text-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-3xs">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                            {match.submission.kode || 'Tanpa Kode'}
+                          </span>
+                          <span className="font-semibold text-stone-700">
+                            {match.submission.tanggal || '-'}
+                          </span>
+                          <span className="text-stone-500 font-mono text-[11px]">
+                            ({match.submission.jenisPengajuan})
+                          </span>
+                          <span className="font-bold text-amber-900">
+                            Rp {match.matchedNominal.toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-amber-800 mt-0.5 font-medium">
+                          {match.reason}
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold font-mono text-amber-900 bg-amber-100 px-2.5 py-1 rounded-md shrink-0 border border-amber-200 self-start sm:self-auto">
+                        Sudah Ada di Sistem
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* INTEGRASI KONEKSI RAB & PROYEK (ACCURATE ONLINE STYLE) */}
         <div className={`p-4 rounded-2xl border transition-all my-3 ${
@@ -3593,6 +3709,28 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             </div>
           </div>
 
+          {/* Duplicate Items Warning Banner */}
+          {duplicateItemIndices.size > 0 && (
+            <div className="mb-3 p-3 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-amber-900 animate-fade-in shadow-3xs">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+                <div>
+                  <span className="font-bold">Terdeteksi {duplicateItemIndices.size} baris dengan uraian & nominal yang sama persis.</span>
+                  <span className="text-amber-700 block text-[11px]">Baris yang terindikasi dobel telah diberi tanda oranye pada tabel di bawah.</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCleanDuplicateItems}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition cursor-pointer shadow-3xs flex items-center justify-center gap-1.5 self-start sm:self-auto shrink-0"
+                title="Hapus baris duplikat dan pertahankan baris pertama"
+              >
+                <span>🧹</span>
+                <span>Bersihkan Baris Duplikat</span>
+              </button>
+            </div>
+          )}
+
           {/* Table Container */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[700px] border-collapse text-left text-sm">
@@ -3616,10 +3754,20 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               <tbody className="divide-y divide-stone-100">
                 {items.map((item, index) => {
                   const volAnalysis = analyzeVolumeInput(item.jumlahVolume);
+                  const isItemDuplicate = duplicateItemIndices.has(index);
 
                   return (
-                    <tr key={item.id} className="hover:bg-stone-50/50">
-                      <td className="py-3 font-mono text-stone-450">{index + 1}</td>
+                    <tr key={item.id} className={`transition ${isItemDuplicate ? 'bg-amber-50/70 border-l-4 border-l-amber-500' : 'hover:bg-stone-50/50'}`}>
+                      <td className="py-3 font-mono text-stone-450">
+                        <div className="flex items-center gap-1">
+                          <span>{index + 1}</span>
+                          {isItemDuplicate && (
+                            <span className="text-[9px] font-bold font-mono px-1 py-0.2 bg-amber-200 text-amber-900 rounded border border-amber-300" title="Baris duplikat dengan uraian & nominal sama">
+                              Dobel
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       
                       {/* Item Name */}
                       <td className="py-3 pr-2">
@@ -4341,6 +4489,100 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 title="Hanya jika pengeluaran benar-benar darurat di hari libur"
               >
                 Tetap Simpan (Pengecualian Khusus)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PERINGATAN & KONFIRMASI POTENSI DOUBLE INPUT */}
+      {isDoubleInputConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-amber-50 border-b border-amber-200 p-5 flex items-start gap-3.5">
+              <div className="p-2.5 rounded-2xl bg-amber-100 text-amber-800 shrink-0 border border-amber-300 shadow-3xs">
+                <AlertTriangle size={24} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-full inline-block mb-1">
+                    Pencegahan Double Input
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsDoubleInputConfirmModalOpen(false)}
+                    className="p-1 text-stone-400 hover:text-stone-700 rounded-lg transition"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <h3 className="text-base font-black text-amber-950">
+                  Peringatan: Potensi Transaksi Dobel
+                </h3>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 text-sm text-stone-700 max-h-[60vh] overflow-y-auto">
+              <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4">
+                <div className="flex items-center justify-between text-xs font-mono text-amber-900 mb-1">
+                  <span>Penerima Saat Ini:</span>
+                  <span className="font-bold text-amber-950">{dibayarkanKepada || '-'}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs font-mono text-amber-900 mb-1">
+                  <span>Nominal Pengajuan:</span>
+                  <span className="font-black text-amber-950">Rp {calculatedGrandTotal.toLocaleString('id-ID')}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs font-mono text-amber-900">
+                  <span>Tanggal Pengajuan:</span>
+                  <span className="font-semibold text-amber-950">{tanggal || '-'}</span>
+                </div>
+              </div>
+
+              <div className="text-xs leading-relaxed text-stone-600 bg-stone-50 rounded-xl p-3.5 border border-stone-200">
+                <p className="font-semibold text-stone-900 mb-1">
+                  Transaksi Serupa Ditemukan di Database:
+                </p>
+                <p>
+                  Sistem menemukan <strong className="text-amber-950">{potentialDuplicateSubmissions.length} voucher</strong> dengan penerima dan nominal yang sama persis:
+                </p>
+                <div className="mt-2 space-y-2">
+                  {potentialDuplicateSubmissions.map((match, idx) => (
+                    <div key={idx} className="p-2.5 bg-white rounded-lg border border-amber-200 text-xs shadow-3xs">
+                      <div className="flex items-center justify-between font-mono font-bold text-stone-800">
+                        <span className="bg-stone-100 px-1.5 py-0.5 rounded border border-stone-200">{match.submission.kode || 'Voucher'} ({match.submission.tanggal})</span>
+                        <span className="text-amber-900">Rp {match.matchedNominal.toLocaleString('id-ID')}</span>
+                      </div>
+                      <div className="text-[11px] text-amber-800 mt-1 font-medium">
+                        {match.reason}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-xs text-amber-900 font-medium">
+                Apakah Anda yakin ingin tetap menyimpan voucher ini? Jika data ini tidak sengaja terinput dua kali, silakan batalkan untuk menjaga keakuratan pembukuan.
+              </p>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-stone-50 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsDoubleInputConfirmModalOpen(false)}
+                className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-stone-700 hover:text-stone-900 hover:bg-stone-100 rounded-xl border border-stone-300 transition cursor-pointer"
+              >
+                Batal & Tinjau Kembali
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmDoubleInputSave}
+                className="w-full sm:w-auto px-4 py-2.5 text-xs font-black text-amber-950 bg-amber-400 hover:bg-amber-500 rounded-xl shadow-xs transition cursor-pointer"
+              >
+                Bukan Dobel, Tetap Simpan
               </button>
             </div>
           </div>

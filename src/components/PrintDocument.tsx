@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'; 
 import QRCode from 'qrcode';
 import { Submission } from '../types';
-import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
+import { formatRupiah, formatDateIndonesian, numberToTerbilang, isPettyCashSubmission } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle } from 'lucide-react';
+import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
@@ -130,6 +130,7 @@ interface PrintDocumentProps {
   onBack: () => void;
   onEdit?: () => void;
   onOpenSppdEditor?: () => void;
+  onNavigateToPettyCashMapping?: (submission: Submission) => void;
   userProfile?: any;
   initialTab?: 'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet' | 'only_invoice_payment';
   onUpdateSubmission?: (updated: Submission) => void;
@@ -508,10 +509,24 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
   );
 };
 
-export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack, onEdit, onOpenSppdEditor, userProfile, initialTab, onUpdateSubmission, isSharedView }) => {
+export const PrintDocument: React.FC<PrintDocumentProps> = ({ 
+  submission, 
+  onBack, 
+  onEdit, 
+  onOpenSppdEditor, 
+  onNavigateToPettyCashMapping,
+  userProfile, 
+  initialTab, 
+  onUpdateSubmission, 
+  isSharedView 
+}) => {
   const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran' | 'sppd_sheet' | 'only_invoice_payment'>(
     initialTab || 'both'
   );
+
+  const isPettyCash = useMemo(() => {
+    return isPettyCashSubmission(submission) || Boolean(submission.isPettyCash) || (submission.jenisPengajuan?.toLowerCase().includes('petty') ?? false);
+  }, [submission]);
 
   const isSppdSubmission = useMemo(() => {
     const jp = (submission.jenisPengajuan || '').toLowerCase();
@@ -1631,6 +1646,18 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 <span>Edit Form SPPD</span>
               </button>
             )}
+            {/* Menu Petakan LPJ Transaksi Ini (Khusus Transaksi Petty Cash) */}
+            {isPettyCash && onNavigateToPettyCashMapping && (
+              <button
+                type="button"
+                onClick={() => onNavigateToPettyCashMapping(submission)}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white font-black px-4 sm:px-5 py-2.5 rounded-xl transition cursor-pointer shadow-3xs text-sm shrink-0 border border-emerald-800"
+                title="Petakan LPJ dari transaksi ini ke Pemetaan Akun (Accurate)"
+              >
+                <FileSpreadsheet size={16} className="text-emerald-200" />
+                <span>Petakan LPJ Transaksi Ini</span>
+              </button>
+            )}
             {onEdit && (
               <button
                 onClick={onEdit}
@@ -1941,9 +1968,22 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                             </span>
                           )}
                           {isPettyCash && (
-                            <span className="inline-block mt-0.5 text-[9px] px-1 bg-sky-50 text-sky-700 border border-sky-200 rounded font-semibold">
-                              LPJ Petty Cash
-                            </span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="inline-block text-[9px] px-1 bg-sky-50 text-sky-700 border border-sky-200 rounded font-semibold">
+                                LPJ Petty Cash
+                              </span>
+                              {onNavigateToPettyCashMapping && (
+                                <button
+                                  type="button"
+                                  onClick={() => onNavigateToPettyCashMapping(submission)}
+                                  className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded font-bold transition cursor-pointer"
+                                  title="Petakan LPJ berkas ini ke Pemetaan Akun Accurate"
+                                >
+                                  <FileSpreadsheet size={10} className="text-emerald-700" />
+                                  <span>Petakan Akun</span>
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
 

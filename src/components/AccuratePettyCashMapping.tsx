@@ -7,7 +7,7 @@ import {
   Copy, Download, RefreshCw, Plus, Trash2, Edit2, Check, ArrowRight, 
   Settings, BookOpen, Layers, ShieldCheck, Search, Filter, HelpCircle,
   FileCheck, DollarSign, ChevronDown, ChevronUp, Save, Eye, X, ArrowLeftRight, ExternalLink,
-  Cloud, Database, HardDrive, History, CheckCheck
+  Cloud, Database, HardDrive, History, CheckCheck, AlertTriangle
 } from 'lucide-react';
 import { AccurateAccount, AccurateMappedTransaction, AccurateMappingReport, PettyCashReport, Submission } from '../types';
 import { DEFAULT_ACCURATE_ACCOUNTS, autoMapTransactionToAccurate } from '../data/accurateCoaData';
@@ -15,6 +15,10 @@ import { useAccurateCoa } from '../utils/accurateCoaStore';
 import { AccurateCoaMasterModal } from './AccurateCoaMasterModal';
 import { SearchableAccountSelect } from './SearchableAccountSelect';
 import { isPettyCashSubmission, getPettyCashCustodian, sortSubmissionsDescending } from '../utils';
+import { 
+  findDuplicateAccurateTransactions, 
+  removeDuplicateAccurateTransactions 
+} from '../utils/duplicateDetector';
 import { 
   saveAccurateMappingToFirestore, 
   deleteAccurateMappingFromFirestore,
@@ -35,6 +39,8 @@ interface AccuratePettyCashMappingProps {
   submissions?: Submission[];
   userProfile?: any;
   pettyCashHolders?: string[];
+  targetSubmission?: Submission | null;
+  onClearTargetSubmission?: () => void;
   onUpdatePettyCashHolders?: (holders: string[]) => void;
   onSaveSubmission?: (sub: Submission) => Promise<void> | void;
   onBack?: () => void;
@@ -188,6 +194,8 @@ export function AccuratePettyCashMapping({
   submissions = [],
   userProfile,
   pettyCashHolders = [],
+  targetSubmission,
+  onClearTargetSubmission,
   onUpdatePettyCashHolders,
   onSaveSubmission,
   onBack
@@ -821,6 +829,19 @@ export function AccuratePettyCashMapping({
   const [period, setPeriod] = useState<string>(() => cachedInitial?.period || new Date().toISOString().substring(0, 7));
   const [transactions, setTransactions] = useState<AccurateMappedTransaction[]>(() => cachedInitial?.transactions || []);
   const [savedSearchQuery, setSavedSearchQuery] = useState<string>('');
+
+  // Deteksi Potensi Transaksi Dobel di Pemetaan LPJ Petty Cash (Tanggal, Uraian & Nominal Sama)
+  const duplicateTransactionIds = useMemo(() => {
+    return findDuplicateAccurateTransactions(transactions);
+  }, [transactions]);
+
+  const handleCleanDuplicateTransactions = () => {
+    const { cleaned, removedCount } = removeDuplicateAccurateTransactions(transactions);
+    if (removedCount > 0) {
+      setTransactions(cleaned);
+      setSuccessMessage(`${removedCount} transaksi duplikat berhasil dibersihkan agar tidak terdobel!`);
+    }
+  };
   
   // Last saved timestamp & Auto-save status
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(() => {
@@ -1923,6 +1944,14 @@ export function AccuratePettyCashMapping({
       }
     } catch (e) {}
   };
+
+  // Effect to automatically load targetSubmission when directed from Preview & Cetak Dokumen or other views
+  useEffect(() => {
+    if (targetSubmission) {
+      handleLoadVoucherSubmission(targetSubmission);
+      onClearTargetSubmission?.();
+    }
+  }, [targetSubmission]);
 
   // Save current mapping report to Cloud Firestore & App LocalStorage
   const handleSaveMappingToCloud = async () => {
@@ -3337,6 +3366,28 @@ export function AccuratePettyCashMapping({
 
           {/* Interactive Detailed Mapping Table */}
           <div id="accurate-mapped-table-section" className="space-y-3 pt-4">
+            {/* Warning Banner: Transaksi Dobel Terdeteksi */}
+            {duplicateTransactionIds.size > 0 && (
+              <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-amber-900 animate-fade-in shadow-3xs font-sans">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                  <div>
+                    <span className="font-bold">Terdeteksi {duplicateTransactionIds.size} baris transaksi dengan tanggal, uraian & nominal yang sama persis.</span>
+                    <span className="text-amber-700 block text-[11px]">Sistem menandai baris duplikat dengan label oranye untuk mencegah double input ke Accurate.</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCleanDuplicateTransactions}
+                  className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition cursor-pointer shadow-3xs flex items-center justify-center gap-1.5 self-start sm:self-auto shrink-0 font-sans"
+                  title="Hapus baris transaksi yang terdobel"
+                >
+                  <span>🧹</span>
+                  <span>Bersihkan Transaksi Dobel</span>
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center justify-between">
               <h4 className="font-sans font-bold text-stone-900 text-sm flex items-center gap-2">
                 <Edit2 size={16} className="text-amber-600" />
@@ -3367,10 +3418,20 @@ export function AccuratePettyCashMapping({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-200">
-                  {transactions.map((t, idx) => (
-                    <tr key={t.id} className="hover:bg-amber-50/40 transition">
+                  {transactions.map((t, idx) => {
+                    const isTxDuplicate = duplicateTransactionIds.has(t.id);
+
+                    return (
+                    <tr key={t.id} className={`transition ${isTxDuplicate ? 'bg-amber-50/70 border-l-4 border-l-amber-500' : 'hover:bg-amber-50/40'}`}>
                       <td className="p-2 text-center text-stone-500 font-bold">
-                        {idx + 1}
+                        <div className="flex items-center justify-center gap-1">
+                          <span>{idx + 1}</span>
+                          {isTxDuplicate && (
+                            <span className="text-[9px] font-bold font-mono px-1 py-0.2 bg-amber-200 text-amber-900 rounded border border-amber-300" title="Transaksi dobel">
+                              Dobel
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="p-2">
@@ -3448,7 +3509,8 @@ export function AccuratePettyCashMapping({
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
