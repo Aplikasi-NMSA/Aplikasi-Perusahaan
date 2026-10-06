@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
 import { normalizeText } from '../utils/duplicateDetector';
@@ -95,31 +95,57 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   // Filter khusus untuk hanya menampilkan potensi voucher dobel input
   const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+  const [duplicateModalSearch, setDuplicateModalSearch] = useState('');
+  const [selectedClusterKey, setSelectedClusterKey] = useState<string | null>(null);
 
-  // Deteksi Potensi Double Input Lintas Seluruh Data Voucher (Penerima Sama & Nominal Sama)
-  const duplicateSubmissionIds = useMemo(() => {
-    const ids = new Set<string>();
-    const seenMap = new Map<string, string[]>();
+  // Deteksi & Pengelompokan Potensi Double Input Lintas Seluruh Data Voucher (Penerima Sama & Nominal Sama)
+  const duplicateClusters = useMemo(() => {
+    const clusterMap = new Map<string, { recipientName: string; nominal: number; subs: Submission[] }>();
 
     submissions.forEach(sub => {
       const total = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
       const recipient = normalizeText(sub.dibayarkanKepada);
       if (recipient && total > 0) {
         const key = `${recipient}_${total}`;
-        const existing = seenMap.get(key) || [];
-        existing.push(sub.id);
-        seenMap.set(key, existing);
+        const cluster = clusterMap.get(key) || {
+          recipientName: sub.dibayarkanKepada || 'Tanpa Nama',
+          nominal: total,
+          subs: []
+        };
+        cluster.subs.push(sub);
+        clusterMap.set(key, cluster);
       }
     });
 
-    seenMap.forEach((matchedIds) => {
-      if (matchedIds.length > 1) {
-        matchedIds.forEach(id => ids.add(id));
+    const result: { key: string; recipientName: string; nominal: number; submissions: Submission[] }[] = [];
+    clusterMap.forEach((val, key) => {
+      if (val.subs.length > 1) {
+        val.subs.sort((a, b) => new Date(b.tanggal || 0).getTime() - new Date(a.tanggal || 0).getTime());
+        result.push({
+          key,
+          recipientName: val.recipientName,
+          nominal: val.nominal,
+          submissions: val.subs
+        });
       }
     });
 
-    return ids;
+    return result.sort((a, b) => {
+      if (b.submissions.length !== a.submissions.length) {
+        return b.submissions.length - a.submissions.length;
+      }
+      return b.nominal - a.nominal;
+    });
   }, [submissions]);
+
+  const duplicateSubmissionIds = useMemo(() => {
+    const ids = new Set<string>();
+    duplicateClusters.forEach(cluster => {
+      cluster.submissions.forEach(s => ids.add(s.id));
+    });
+    return ids;
+  }, [duplicateClusters]);
 
   const [shareModalSub, setShareModalSub] = useState<Submission | null>(null);
   const [isCopiedShare, setIsCopiedShare] = useState(false);
@@ -1304,21 +1330,35 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </button>
               </div>
 
-              {/* Quick Filter: Potensi Dobel Input */}
+              {/* Quick Filter & Analisis: Potensi Dobel Input */}
               {duplicateSubmissionIds.size > 0 && (
-                <div className="self-end pb-0.5">
+                <div className="self-end pb-0.5 flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    id="btn-open-duplicate-modal"
+                    onClick={() => {
+                      setSelectedClusterKey(null);
+                      setDuplicateModalSearch('');
+                      setIsDuplicateModalOpen(true);
+                    }}
+                    title="Klik untuk membuka dialog analisis & rekap lengkap seluruh voucher yang berpotensi dobel"
+                    className="px-3.5 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-stone-950 font-black ring-2 ring-amber-400 active:scale-95"
+                  >
+                    <AlertTriangle size={14} className="text-stone-950" />
+                    <span>⚠️ Potensi Dobel ({duplicateSubmissionIds.size})</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setShowOnlyDuplicates(prev => !prev)}
-                    title="Tampilkan hanya voucher yang terindikasi memiliki nama penerima & total nominal sama persis"
-                    className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs ${
+                    title={showOnlyDuplicates ? "Matikan filter dobel (tampilkan semua)" : "Saring tabel di bawah hanya untuk voucher dobel"}
+                    className={`px-2.5 py-2 text-xs font-bold font-mono rounded-xl transition cursor-pointer border ${
                       showOnlyDuplicates
-                        ? 'bg-amber-500 text-stone-950 font-black shadow-xs ring-2 ring-amber-400'
-                        : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300'
+                        ? 'bg-amber-100 text-amber-950 border-amber-400 font-extrabold shadow-3xs'
+                        : 'bg-white hover:bg-stone-100 text-stone-600 border-stone-300'
                     }`}
                   >
-                    <AlertTriangle size={13} className="text-amber-700" />
-                    <span>⚠️ Potensi Dobel ({duplicateSubmissionIds.size})</span>
+                    {showOnlyDuplicates ? '✓ Filter Aktif' : 'Saring Tabel'}
                   </button>
                 </div>
               )}
@@ -1389,6 +1429,46 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 <span>Cetak List (PDF)</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active Filter Notification: Potensi Dobel */}
+      {showOnlyDuplicates && (
+        <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <div className="p-1.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300">
+              <AlertTriangle size={18} />
+            </div>
+            <div>
+              <span className="font-black text-amber-950 block sm:inline">
+                Mode Saring Dobel Aktif:
+              </span>{' '}
+              <span>
+                Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang terindikasi memiliki nama penerima & nominal yang sama persis di sistem.
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedClusterKey(null);
+                setDuplicateModalSearch('');
+                setIsDuplicateModalOpen(true);
+              }}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs shadow-3xs transition cursor-pointer flex items-center gap-1.5"
+            >
+              <Layers size={13} />
+              <span>Lihat Rekap Kelompok Dobel</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowOnlyDuplicates(false)}
+              className="px-3 py-1.5 bg-white hover:bg-stone-100 text-stone-700 font-bold border border-stone-300 rounded-xl text-xs transition cursor-pointer"
+            >
+              Tampilkan Semua
+            </button>
           </div>
         </div>
       )}
@@ -1471,9 +1551,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                             )}
 
                             {duplicateSubmissionIds.has(sub.id) && (
-                              <span className="inline-block text-[9px] font-mono bg-amber-100 text-amber-900 border border-amber-300 font-black px-2 py-0.5 rounded-md shadow-3xs" title="Terdeteksi voucher lain dengan nama penerima dan nominal sama persis">
-                                ⚠️ Potensi Dobel
-                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const total = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
+                                  const key = `${normalizeText(sub.dibayarkanKepada)}_${total}`;
+                                  setSelectedClusterKey(key);
+                                  setDuplicateModalSearch(sub.dibayarkanKepada || '');
+                                  setIsDuplicateModalOpen(true);
+                                }}
+                                className="inline-flex items-center gap-1 text-[9px] font-mono bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-black px-2 py-0.5 rounded-md shadow-3xs cursor-pointer transition active:scale-95"
+                                title="Klik untuk membuka rincian pasangan transaksi yang sama persis di sistem"
+                              >
+                                <span>⚠️ Potensi Dobel</span>
+                              </button>
                             )}
 
                             {(() => {
@@ -3988,6 +4080,232 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
         );
       })()}
+
+      {/* MODAL ANALISIS & REKAP POTENSI TRANSAKSI DOBEL */}
+      {isDuplicateModalOpen && (
+        <div className="fixed inset-0 z-50 bg-stone-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fade-in font-sans">
+          <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-orange-400 text-stone-950 p-5 sm:p-6 flex items-start gap-4 border-b border-amber-300">
+              <div className="p-3 rounded-2xl bg-white/80 text-amber-950 shadow-3xs shrink-0 border border-amber-400 mt-0.5">
+                <AlertTriangle size={24} className="animate-pulse" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-950 bg-white/80 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-amber-300 shadow-3xs">
+                    Pusat Analisis & Audit Dobel Input
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsDuplicateModalOpen(false)}
+                    className="p-1.5 text-stone-800 hover:text-stone-950 rounded-xl hover:bg-white/50 transition cursor-pointer"
+                    title="Tutup dialog"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <h3 className="text-base sm:text-xl font-black text-stone-950 tracking-tight">
+                  Daftar & Rekap Potensi Transaksi Dobel
+                </h3>
+                <p className="text-xs text-stone-850 mt-1 leading-relaxed">
+                  Menampilkan <strong>{duplicateSubmissionIds.size} voucher</strong> yang terkelompok ke dalam <strong>{duplicateClusters.length} grup transaksi</strong> karena memiliki nama penerima dan nominal sama persis.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Toolbar / Filter bar */}
+            <div className="p-4 bg-stone-50 border-b border-stone-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="text"
+                  placeholder="Cari nama penerima atau nominal di daftar dobel..."
+                  className="w-full pl-9 pr-4 py-2 bg-white border border-stone-300 rounded-xl text-xs focus:ring-2 focus:ring-amber-400 focus:outline-none text-stone-800 font-medium"
+                  value={duplicateModalSearch}
+                  onChange={(e) => setDuplicateModalSearch(e.target.value)}
+                />
+                {duplicateModalSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setDuplicateModalSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 p-0.5 cursor-pointer"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowOnlyDuplicates(prev => !prev)}
+                  className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition cursor-pointer border flex items-center gap-1.5 ${
+                    showOnlyDuplicates
+                      ? 'bg-amber-100 text-amber-950 border-amber-400 font-extrabold shadow-3xs'
+                      : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-300'
+                  }`}
+                >
+                  <Filter size={13} />
+                  <span>{showOnlyDuplicates ? '✓ Filter Tabel Utama Aktif' : 'Terapkan Filter ke Tabel'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body / Cluster List */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-4 max-h-[60vh]">
+              {(() => {
+                const searchLower = duplicateModalSearch.trim().toLowerCase();
+                const filteredClusters = duplicateClusters.filter(cluster => {
+                  if (!searchLower) return true;
+                  const matchRecipient = cluster.recipientName.toLowerCase().includes(searchLower);
+                  const matchNominal = String(cluster.nominal).includes(searchLower) || formatRupiah(cluster.nominal).toLowerCase().includes(searchLower);
+                  const matchKode = cluster.submissions.some(s => (s.kode || '').toLowerCase().includes(searchLower));
+                  return matchRecipient || matchNominal || matchKode;
+                });
+
+                if (filteredClusters.length === 0) {
+                  return (
+                    <div className="text-center py-12 px-4 bg-stone-50 rounded-2xl border border-stone-200">
+                      <AlertCircle size={32} className="mx-auto text-stone-400 mb-2" />
+                      <p className="text-sm font-bold text-stone-700">Tidak ada kelompok dobel yang sesuai pencarian</p>
+                      <p className="text-xs text-stone-500 mt-1">Coba gunakan kata kunci nama penerima atau nominal lain.</p>
+                    </div>
+                  );
+                }
+
+                return filteredClusters.map((cluster, cIdx) => {
+                  const isSelected = selectedClusterKey === cluster.key;
+                  return (
+                    <div 
+                      key={cIdx}
+                      className={`rounded-2xl border transition-all ${
+                        isSelected 
+                          ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300 shadow-sm' 
+                          : 'border-stone-200 bg-white hover:border-amber-300 shadow-3xs'
+                      }`}
+                    >
+                      {/* Cluster Header */}
+                      <div className="p-4 bg-stone-50/80 border-b border-stone-200 rounded-t-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <span className="font-mono text-xs font-bold text-stone-500 bg-stone-200 px-2 py-0.5 rounded">
+                            Kelompok #{cIdx + 1}
+                          </span>
+                          <span className="text-sm font-black text-stone-900">
+                            👤 {cluster.recipientName}
+                          </span>
+                          <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300 font-mono">
+                            💰 Rp {formatRupiah(cluster.nominal)}
+                          </span>
+                        </div>
+                        <span className="text-[11px] font-mono font-bold text-stone-600 bg-white px-2.5 py-1 rounded-lg border border-stone-250 shrink-0 self-start sm:self-auto">
+                          {cluster.submissions.length} Transaksi Serupa
+                        </span>
+                      </div>
+
+                      {/* Cluster Items List */}
+                      <div className="p-3 sm:p-4 divide-y divide-stone-100">
+                        {cluster.submissions.map((sub, sIdx) => {
+                          const itemsCount = sub.items?.length || 0;
+                          return (
+                            <div key={sIdx} className="py-2.5 first:pt-0 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <span className="font-mono font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-250">
+                                    {sub.kode || 'Tanpa Kode'}
+                                  </span>
+                                  <span className="text-stone-600 font-medium">
+                                    📅 {formatDateIndonesian(sub.tanggal)}
+                                  </span>
+                                  <span className="text-stone-500 font-mono text-[11px]">
+                                    ({sub.jenisPengajuan})
+                                  </span>
+                                  <span className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded-full border ${
+                                    sub.status === 'Lunas' 
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}>
+                                    {sub.status || 'Belum Lunas'}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-stone-600 line-clamp-1">
+                                  {sub.notes ? (
+                                    <span>Catatan: <em>{sub.notes}</em></span>
+                                  ) : itemsCount > 0 ? (
+                                    <span>Rincian: {sub.items?.map(it => it.item).join(', ')}</span>
+                                  ) : (
+                                    <span className="italic text-stone-400">Tidak ada catatan tambahan</span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Row Action Buttons */}
+                              <div className="flex items-center gap-1.5 shrink-0 self-end md:self-auto">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsDuplicateModalOpen(false);
+                                    onSelect(sub);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-750 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                                  title="Lihat rincian & cetak voucher ini"
+                                >
+                                  <Eye size={12} />
+                                  <span>Lihat</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsDuplicateModalOpen(false);
+                                    onEdit(sub);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                                  title="Edit data voucher ini"
+                                >
+                                  <Edit2 size={12} />
+                                  <span>Edit</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (window.confirm(`Hapus voucher ${sub.kode || 'ini'} milik ${sub.dibayarkanKepada} senilai Rp ${formatRupiah(cluster.nominal)}?`)) {
+                                      onDelete(sub.id);
+                                    }
+                                  }}
+                                  className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                                  title="Hapus jika voucher ini tidak sengaja terinput dua kali"
+                                >
+                                  <Trash2 size={12} />
+                                  <span>Hapus</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-stone-50 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <span className="text-stone-500 font-medium">
+                💡 Periksa voucher di atas. Jika merupakan tagihan rutin terpisah, Anda dapat membiarkannya. Jika tidak sengaja terinput 2 kali, silakan gunakan tombol <strong>Hapus</strong>.
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsDuplicateModalOpen(false)}
+                className="w-full sm:w-auto px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl transition cursor-pointer shadow-xs shrink-0"
+              >
+                Tutup Rekap
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
