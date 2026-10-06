@@ -190,6 +190,7 @@ export interface DailyAttendance {
 
 export interface AttendanceRecord {
   workerId: string;
+  workerName?: string;
   attendance: { [date: string]: boolean }; // date -> present status
   dailyAllowance: number; // e.g. Rp 50.000
   customStatus?: { [date: string]: "Sakit" | "Izin" | "Meeting" | "Cuti" | "Absen" | "Alpa" | string };
@@ -211,6 +212,8 @@ export interface WeeklyReport {
   driveUrl?: string;
   pdfDriveUrl?: string;
   excelDriveUrl?: string;
+  totalAmount?: number;
+  status?: string;
 }
 
 export interface PettyCashTransaction {

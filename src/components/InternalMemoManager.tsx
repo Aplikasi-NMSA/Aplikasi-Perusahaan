@@ -83,6 +83,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   initialSubmissionForMemo = null,
   onBackToList,
   userProfile,
+  onCreateVoucher,
 }) => {
   const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'banks'>('editor');
   const [memos, setMemos] = useState<InternalMemo[]>(() => getSavedInternalMemos());
@@ -102,7 +103,6 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   const [isBulkSyncing, setIsBulkSyncing] = useState(false);
   const [driveSuccessMsg, setDriveSuccessMsg] = useState('');
   const [driveErrorMsg, setDriveErrorMsg] = useState('');
-  const [hiddenMemoForDrive, setHiddenMemoForDrive] = useState<InternalMemo | null>(null);
   const [selectedMemoIds, setSelectedMemoIds] = useState<string[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; memoNumber: string } | null>(null);
 
@@ -377,14 +377,10 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   // Upload specific memo from history to Google Drive
   const handleUploadSpecificMemoToDrive = async (targetMemo: InternalMemo) => {
     setSyncingMemoId(targetMemo.id);
-    setHiddenMemoForDrive(targetMemo);
 
     try {
-      // Allow off-screen DOM element to render
-      await new Promise((res) => setTimeout(res, 350));
-      const hiddenElem = document.getElementById('hidden-memo-printable-document');
-
-      const driveRes = await memoGoogleDriveService.uploadMemo(targetMemo, hiddenElem || undefined);
+      const domElem = currentMemo.id === targetMemo.id ? document.getElementById('internal-memo-printable-document') : null;
+      const driveRes = await memoGoogleDriveService.uploadMemo(targetMemo, domElem || undefined);
 
       if (driveRes.success && driveRes.url) {
         const updatedMemo: InternalMemo = {
@@ -409,7 +405,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         }).catch(() => {});
         saveInternalMemoToFirestore(updatedMemo).catch(() => {});
 
-        setDriveSuccessMsg(`Memo ${targetMemo.nomorMemo} berhasil disimpan di Google Drive: ${driveRes.folderPath}!`);
+        setDriveSuccessMsg(`Memo ${targetMemo.nomorMemo} berhasil diarsipkan di Google Drive: ${driveRes.folderPath}!`);
         setTimeout(() => setDriveSuccessMsg(''), 6000);
       } else if (driveRes.error) {
         setDriveErrorMsg(driveRes.error);
@@ -420,7 +416,6 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       setTimeout(() => setDriveErrorMsg(''), 6000);
     } finally {
       setSyncingMemoId(null);
-      setHiddenMemoForDrive(null);
     }
   };
 
@@ -444,15 +439,8 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   const handleUploadSelectedMemosToDrive = async () => {
     const selectedMemos = memos.filter((m) => selectedMemoIds.includes(m.id));
     if (selectedMemos.length === 0) {
-      alert('Pilih minimal 1 memo untuk diunggah ke Google Drive.');
-      return;
-    }
-
-    if (
-      !window.confirm(
-        `Unggah ${selectedMemos.length} memo terpilih ke Google Drive sekarang?\nBerkas PDF akan otomatis disimpan dalam struktur folder resmi tahun/bulan/tanggal.`
-      )
-    ) {
+      setDriveErrorMsg('Pilih minimal 1 memo untuk diunggah ke Google Drive.');
+      setTimeout(() => setDriveErrorMsg(''), 4000);
       return;
     }
 
@@ -464,10 +452,8 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       const m = selectedMemos[i];
       setUploadProgress({ current: i + 1, total: selectedMemos.length, memoNumber: m.nomorMemo });
       try {
-        setHiddenMemoForDrive(m);
-        await new Promise((res) => setTimeout(res, 350));
-        const hiddenElem = document.getElementById('hidden-memo-printable-document');
-        const res = await memoGoogleDriveService.uploadMemo(m, hiddenElem || undefined);
+        const domElem = currentMemo.id === m.id ? document.getElementById('internal-memo-printable-document') : null;
+        const res = await memoGoogleDriveService.uploadMemo(m, domElem || undefined);
         if (res.success && res.url) {
           const updatedMemo: InternalMemo = {
             ...m,
@@ -496,12 +482,11 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       }
     }
 
-    setHiddenMemoForDrive(null);
     setUploadProgress(null);
     setIsBulkSyncing(false);
     setSelectedMemoIds([]);
     setDriveSuccessMsg(
-      `Selesai! ${successCount} memo terpilih berhasil disimpan ke Google Drive.${failCount > 0 ? ` (${failCount} gagal)` : ''}`
+      `Selesai! ${successCount} memo terpilih berhasil diarsipkan ke Google Drive.${failCount > 0 ? ` (${failCount} gagal)` : ''}`
     );
     setTimeout(() => setDriveSuccessMsg(''), 7000);
   };
@@ -509,15 +494,8 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   // Upload all memos in riwayat to Google Drive
   const handleUploadAllMemosToDrive = async () => {
     if (memos.length === 0) {
-      alert('Belum ada memo di riwayat.');
-      return;
-    }
-
-    if (
-      !window.confirm(
-        `Unggah SEMUA (${memos.length}) memo di riwayat ke Google Drive sekarang?\nBerkas PDF akan otomatis disimpan dalam struktur folder resmi tahun/bulan/tanggal.`
-      )
-    ) {
+      setDriveErrorMsg('Belum ada memo di riwayat.');
+      setTimeout(() => setDriveErrorMsg(''), 4000);
       return;
     }
 
@@ -529,10 +507,8 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       const m = memos[i];
       setUploadProgress({ current: i + 1, total: memos.length, memoNumber: m.nomorMemo });
       try {
-        setHiddenMemoForDrive(m);
-        await new Promise((res) => setTimeout(res, 350));
-        const hiddenElem = document.getElementById('hidden-memo-printable-document');
-        const res = await memoGoogleDriveService.uploadMemo(m, hiddenElem || undefined);
+        const domElem = currentMemo.id === m.id ? document.getElementById('internal-memo-printable-document') : null;
+        const res = await memoGoogleDriveService.uploadMemo(m, domElem || undefined);
         if (res.success && res.url) {
           const updatedMemo: InternalMemo = {
             ...m,
@@ -561,11 +537,10 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       }
     }
 
-    setHiddenMemoForDrive(null);
     setUploadProgress(null);
     setIsBulkSyncing(false);
     setDriveSuccessMsg(
-      `Selesai! ${successCount} dari ${memos.length} memo di riwayat berhasil disimpan ke Google Drive.${failCount > 0 ? ` (${failCount} gagal)` : ''}`
+      `Selesai! ${successCount} dari ${memos.length} memo di riwayat berhasil diarsipkan ke Google Drive.${failCount > 0 ? ` (${failCount} gagal)` : ''}`
     );
     setTimeout(() => setDriveSuccessMsg(''), 7000);
   };
@@ -2302,18 +2277,6 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Hidden memo document for off-screen PDF snapshot generation */}
-      {hiddenMemoForDrive && (
-        <div className="fixed -left-[9999px] top-0 pointer-events-none opacity-0 z-[-1] w-[850px]">
-          <div id="hidden-memo-printable-document" className="w-[850px] bg-white">
-            <InternalMemoDocument
-              memo={hiddenMemoForDrive}
-              customLogoUrl={userProfile?.companyDetails?.logoUrl}
-            />
-          </div>
         </div>
       )}
 

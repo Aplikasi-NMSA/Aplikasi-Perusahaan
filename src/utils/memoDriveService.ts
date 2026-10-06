@@ -13,9 +13,11 @@ import {
   getActiveGoogleDriveAccount,
   executeDriveApiWithAutoRefresh,
   getOrRenewDriveToken,
+  getStoredGoogleDriveToken,
+  googleDriveLogin,
 } from '../firebase';
 import { InternalMemo } from '../types';
-import { generateMemoPdfBlobFromElement } from './memoUtils';
+import { generateInternalMemoPdfBlob, extractMemoSequence } from './memoUtils';
 
 export interface MemoDriveUploadResult {
   success: boolean;
@@ -23,6 +25,7 @@ export interface MemoDriveUploadResult {
   url?: string;
   folderPath?: string;
   folderId?: string;
+  fileName?: string;
   error?: string;
 }
 
@@ -35,9 +38,28 @@ export class MemoGoogleDriveService {
     const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
     const targetEmail = activeAccount?.email || lastEmail || undefined;
 
-    let token = await getOrRenewDriveToken(targetEmail, true);
+    let token = getStoredGoogleDriveToken(false);
     if (!token) {
-      token = await ensureValidDriveToken(true);
+      token = localStorage.getItem('g_access_token');
+    }
+    if (!token) {
+      token = await getOrRenewDriveToken(targetEmail, false);
+    }
+    if (!token) {
+      token = await ensureValidDriveToken(false);
+    }
+
+    // If still no token, perform interactive login popup so user request succeeds
+    if (!token) {
+      try {
+        const loginRes = await googleDriveLogin(targetEmail, false);
+        token = loginRes.accessToken;
+      } catch (authErr: any) {
+        throw new Error(
+          authErr.message ||
+          'Akun Google Drive belum terhubung atau sesi login telah kedaluwarsa. Silakan sambungkan Google Drive terlebih dahulu.'
+        );
+      }
     }
 
     if (!token) {
@@ -57,27 +79,25 @@ export class MemoGoogleDriveService {
   }
 
   /**
-   * Uploads an Internal Memo to Google Drive in a separated dedicated folder by Year, Month, and Date
+   * Uploads an Internal Memo to Google Drive in an organized folder structure:
+   * ARSIP-INTERNAL-MEMO-NMSA / [Tahun] / [Bulan] / [0168 - No. NomorMemo - Perihal.pdf]
+   * Ordered by sequence number (4-digit padded) so Google Drive sorts files chronologically & by number.
    */
   public async uploadMemo(
     memo: InternalMemo,
     pdfBlobOrElement?: Blob | HTMLElement
   ): Promise<MemoDriveUploadResult> {
     try {
-      // 1. Prepare PDF Blob
+      // 1. Prepare PDF Blob using bulletproof generator
       let pdfBlob: Blob;
       if (pdfBlobOrElement instanceof Blob) {
         pdfBlob = pdfBlobOrElement;
-      } else if (pdfBlobOrElement instanceof HTMLElement) {
-        pdfBlob = await generateMemoPdfBlobFromElement(pdfBlobOrElement);
       } else {
-        // Fallback: look for DOM element
-        const docElem = document.getElementById('internal-memo-printable-document');
-        if (docElem) {
-          pdfBlob = await generateMemoPdfBlobFromElement(docElem);
-        } else {
-          throw new Error('Elemen dokumen memo tidak ditemukan untuk menghasilkan berkas PDF.');
-        }
+        const domElem =
+          pdfBlobOrElement instanceof HTMLElement
+            ? pdfBlobOrElement
+            : document.getElementById('internal-memo-printable-document');
+        pdfBlob = await generateInternalMemoPdfBlob(memo, domElem || undefined);
       }
 
       // 2. Compute date parts for dedicated folder structure
@@ -100,25 +120,23 @@ export class MemoGoogleDriveService {
       const monthIdx = d.getMonth();
       const monthNum = String(monthIdx + 1).padStart(2, '0');
       const monthFolderName = `${monthNum} - ${monthNamesIndo[monthIdx]}`;
-      const dayNum = String(d.getDate()).padStart(2, '0');
-      const dateFolderName = `${yearStr}-${monthNum}-${dayNum}`;
 
       // Root dedicated archive folder for internal memos organized by Year / Month
       const rootFolderName = 'ARSIP-INTERNAL-MEMO-NMSA';
       const folderHierarchy = [rootFolderName, yearStr, monthFolderName];
       const folderPathStr = folderHierarchy.join('/');
 
-      // 3. Clean up file name with sequential number prefix for automatic sorting by number in Google Drive
-      const numMatch = (memo.nomorMemo || '').match(/^(\d+)/);
-      const seqPrefix = numMatch ? `No_${numMatch[1].padStart(3, '0')}_` : '';
-      const safeNomor = (memo.nomorMemo || 'IM-NMSA')
+      // 3. Clean up file name with 4-digit sequential number prefix for exact alphabetical/numerical sorting in Google Drive
+      const seqNum = extractMemoSequence(memo.nomorMemo) || 1;
+      const seqStr = String(seqNum).padStart(4, '0'); // e.g. "0168"
+      const safeNomor = (memo.nomorMemo || `IM-${seqStr}`)
         .replace(/[\/\\?%*:|"<>]/g, '-')
         .replace(/\s+/g, '_');
       const safePerihal = (memo.perihal || 'Dokumen')
         .replace(/[\/\\?%*:|"<>]/g, '')
         .replace(/\s+/g, '_')
         .slice(0, 45);
-      const fileName = `${seqPrefix}${safeNomor} - ${safePerihal}.pdf`;
+      const fileName = `${seqStr} - No. ${safeNomor} - ${safePerihal}.pdf`;
 
       // 4. Upload to Google Drive using authenticated token
       const result = await this.withDriveToken(async (token) => {
@@ -127,6 +145,24 @@ export class MemoGoogleDriveService {
 
         // Upload or overwrite existing PDF file
         const uploadRes = await uploadFileToDrive(token, folderId, fileName, pdfBlob);
+
+        // Also upload structured JSON backup for this memo
+        try {
+          const jsonPayload = {
+            archiveType: 'internal_memo_nmsa',
+            archivedAt: new Date().toISOString(),
+            memo,
+            year: yearStr,
+            month: monthFolderName,
+            sequence: seqNum,
+            fileName,
+          };
+          const jsonBlob = new Blob([JSON.stringify(jsonPayload, null, 2)], { type: 'application/json' });
+          const jsonFileName = `${seqStr} - No. ${safeNomor} - ${safePerihal}.json`;
+          await uploadFileToDrive(token, folderId, jsonFileName, jsonBlob);
+        } catch (jsonErr) {
+          console.warn('Companion memo JSON upload notice:', jsonErr);
+        }
 
         return {
           fileId: uploadRes.id,
@@ -141,6 +177,7 @@ export class MemoGoogleDriveService {
         url: result.url,
         folderPath: folderPathStr,
         folderId: result.folderId,
+        fileName,
       };
     } catch (err: any) {
       console.error('Error uploading memo to Google Drive:', err);
@@ -149,6 +186,45 @@ export class MemoGoogleDriveService {
         error: err.message || 'Gagal mengunggah Internal Memo ke Google Drive.',
       };
     }
+  }
+
+  /**
+   * Batch upload multiple memos to Google Drive
+   */
+  public async uploadAllMemos(
+    memos: InternalMemo[],
+    onProgress?: (current: number, total: number, memo: InternalMemo) => void
+  ): Promise<{ success: boolean; totalUploaded: number; failed: number; results: MemoDriveUploadResult[] }> {
+    const results: MemoDriveUploadResult[] = [];
+    let totalUploaded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < memos.length; i++) {
+      const m = memos[i];
+      if (onProgress) {
+        onProgress(i + 1, memos.length, m);
+      }
+
+      try {
+        const res = await this.uploadMemo(m);
+        results.push(res);
+        if (res.success) {
+          totalUploaded++;
+        } else {
+          failed++;
+        }
+      } catch (err: any) {
+        failed++;
+        results.push({ success: false, error: err.message });
+      }
+    }
+
+    return {
+      success: totalUploaded > 0,
+      totalUploaded,
+      failed,
+      results,
+    };
   }
 
   /**

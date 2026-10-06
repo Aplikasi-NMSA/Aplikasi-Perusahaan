@@ -13,7 +13,7 @@ import {
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
-import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock, FolderKanban, Building2, CheckCircle2 } from 'lucide-react';
+import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock, FolderKanban, Building2, CheckCircle2, ChevronDown, ChevronUp, Eye, Info, Layers } from 'lucide-react';
 import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput, checkIsHolidayOrWeekend, getNextWorkday, getPreviousWorkday, formatDateWithDayIndonesian, getDefaultTransactionDate, HolidayCheckResult, calculateTaxDueDate } from '../utils';
 import { areNamesSimilar, toTitleCase } from '../utils/nameConsolidation';
 import { 
@@ -338,6 +338,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   // Modal konfirmasi peringatan double input saat simpan
   const [isDoubleInputConfirmModalOpen, setIsDoubleInputConfirmModalOpen] = useState(false);
   const [acknowledgedDoubleInputKeys, setAcknowledgedDoubleInputKeys] = useState<string[]>([]);
+  const [selectedDuplicateModalIndex, setSelectedDuplicateModalIndex] = useState(0);
+  const [expandedDuplicateBannerId, setExpandedDuplicateBannerId] = useState<string | null>(null);
   const [kode, setKode] = useState('HO');
   const [dibayarkanKepada, setDibayarkanKepada] = useState('');
   const [dibayarkanDengan, setDibayarkanDengan] = useState<PaymentMethod>('Cek/Transfer');
@@ -1321,7 +1323,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     }
   };
 
-  // Deteksi Potensi Double Input Lintas Voucher di Database (Nominal & Transaksi Sama)
+  // Deteksi Potensi Double Input Lintas Voucher di Database (Jenis, Nama, Isi & Nominal Sama)
   const potentialDuplicateSubmissions = useMemo(() => {
     return findPotentialDuplicateSubmissions(
       {
@@ -1330,16 +1332,18 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         tanggal,
         jenisPengajuan,
         items,
+        notes,
         id: initialSubmission?.id
       },
       submissions
     );
-  }, [dibayarkanKepada, calculatedGrandTotal, tanggal, jenisPengajuan, items, initialSubmission, submissions]);
+  }, [dibayarkanKepada, calculatedGrandTotal, tanggal, jenisPengajuan, items, notes, initialSubmission, submissions]);
 
   const currentDoubleInputKey = useMemo(() => {
     if (potentialDuplicateSubmissions.length === 0) return '';
-    return `${normalizeText(dibayarkanKepada)}_${calculatedGrandTotal}_${potentialDuplicateSubmissions.map(m => m.submission.id).join('_')}`;
-  }, [dibayarkanKepada, calculatedGrandTotal, potentialDuplicateSubmissions]);
+    const matchIds = potentialDuplicateSubmissions.map(m => m.submission.id).sort().join('_');
+    return `${normalizeText(dibayarkanKepada)}_${normalizeText(jenisPengajuan)}_${calculatedGrandTotal}_${matchIds}`;
+  }, [dibayarkanKepada, jenisPengajuan, calculatedGrandTotal, potentialDuplicateSubmissions]);
 
   const hasUnacknowledgedDuplicates = potentialDuplicateSubmissions.length > 0 && !acknowledgedDoubleInputKeys.includes(currentDoubleInputKey);
 
@@ -2104,6 +2108,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
     // 1. Intersepsi Potensi Double Input (Transaksi & Nominal Sama di Database)
     if (hasUnacknowledgedDuplicates) {
+      setSelectedDuplicateModalIndex(0);
       setIsDoubleInputConfirmModalOpen(true);
       return;
     }
@@ -2236,7 +2241,14 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
           {/* Jenis Pengajuan */}
           <div>
-            <label className="block text-xs font-medium text-stone-500 mb-1">Jenis Pengajuan</label>
+            <div className="flex justify-between items-center mb-1">
+              <label className="block text-xs font-medium text-stone-500">Jenis Pengajuan</label>
+              {potentialDuplicateSubmissions.some(m => m.matchedFactors.sameType) && (
+                <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 animate-pulse">
+                  ⚠️ Ada voucher sejenis ({potentialDuplicateSubmissions.filter(m => m.matchedFactors.sameType).length})
+                </span>
+              )}
+            </div>
             <input
               type="text"
               list="preset-jenis"
@@ -2333,9 +2345,16 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           {/* Dibayarkan Kepada */}
           <div className="lg:col-span-2">
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-medium text-stone-600">
-                {isPettyCash ? "Dibayarkan Kepada / Pemegang Kas" : "Dibayarkan Kepada (Penerima)"}
-              </label>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <label className="block text-xs font-medium text-stone-600">
+                  {isPettyCash ? "Dibayarkan Kepada / Pemegang Kas" : "Dibayarkan Kepada (Penerima)"}
+                </label>
+                {potentialDuplicateSubmissions.some(m => m.matchedFactors.sameName) && (
+                  <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 animate-pulse">
+                    ⚠️ Ada voucher senama ({potentialDuplicateSubmissions.filter(m => m.matchedFactors.sameName).length})
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 {isPettyCash && onOpenManageHolders && (
                   <button
@@ -2501,50 +2520,169 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
         {/* PROACTIVE WARNING BANNER: POTENSI DOUBLE INPUT LINTAS VOUCHER */}
         {potentialDuplicateSubmissions.length > 0 && (
-          <div className="p-4 bg-amber-50/90 border-2 border-amber-400 rounded-2xl animate-fade-in shadow-xs my-3 font-sans">
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300">
-                <AlertTriangle size={20} />
+          <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50/95 via-amber-50/70 to-orange-50/60 border-2 border-amber-400 rounded-2xl animate-fade-in shadow-xs my-4 font-sans">
+            <div className="flex items-start gap-3.5">
+              <div className="p-2.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300 shadow-3xs mt-0.5">
+                <AlertTriangle size={22} className="animate-pulse" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide flex items-center gap-1.5">
-                    <span>⚠️ Terdeteksi Potensi Transaksi Dobel (Double Input)</span>
-                    <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full">
-                      {potentialDuplicateSubmissions.length} Data Mirip di Database
+                  <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide flex items-center gap-1.5 flex-wrap">
+                    <span>⚠️ Peringatan: Voucher Serupa Sudah Ada di Database</span>
+                    <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                      {potentialDuplicateSubmissions.length} Data Terdeteksi
                     </span>
                   </h4>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDuplicateModalIndex(0);
+                      setIsDoubleInputConfirmModalOpen(true);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-3xs transition cursor-pointer flex items-center gap-1"
+                    title="Bandingkan rincian voucher baru dengan voucher lama"
+                  >
+                    <Layers size={13} />
+                    <span>Bandingkan & Konfirmasi</span>
+                  </button>
                 </div>
+
                 <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                  Sistem mendeteksi transaksi dengan <strong>penerima dan nominal yang sama persis</strong> sudah pernah diinput sebelumnya. Harap periksa apakah transaksi ini sengaja diinput ulang atau tidak sengaja terdobel:
+                  Sistem mendeteksi Anda menginput voucher dengan <strong className="text-amber-950">jenis</strong>, <strong className="text-amber-950">nama</strong>, atau <strong className="text-amber-950">isi</strong> dan <strong className="text-amber-950">nominal</strong> yang sama dengan voucher yang pernah dibuat sebelumnya. Harap periksa rincian di bawah agar tidak terjadi double input:
                 </p>
-                <div className="mt-2.5 space-y-2">
-                  {potentialDuplicateSubmissions.map((match, idx) => (
-                    <div key={idx} className="bg-white/90 border border-amber-300 rounded-xl p-2.5 text-xs text-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-3xs">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
-                            {match.submission.kode || 'Tanpa Kode'}
-                          </span>
-                          <span className="font-semibold text-stone-700">
-                            {match.submission.tanggal || '-'}
-                          </span>
-                          <span className="text-stone-500 font-mono text-[11px]">
-                            ({match.submission.jenisPengajuan})
-                          </span>
-                          <span className="font-bold text-amber-900">
-                            Rp {match.matchedNominal.toLocaleString('id-ID')}
-                          </span>
+
+                <div className="mt-3 space-y-2.5">
+                  {potentialDuplicateSubmissions.map((match, idx) => {
+                    const isExpanded = expandedDuplicateBannerId === match.submission.id;
+                    const itemsCount = match.submission.items?.length || 0;
+                    return (
+                      <div 
+                        key={idx} 
+                        className={`bg-white rounded-xl border p-3 text-xs shadow-3xs transition-all ${
+                          match.similarityLevel === 'identik' 
+                            ? 'border-rose-400 bg-rose-50/40' 
+                            : match.similarityLevel === 'tinggi'
+                            ? 'border-amber-400 bg-amber-50/30'
+                            : 'border-amber-300'
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                              {match.submission.kode || 'Tanpa Kode'}
+                            </span>
+                            <span className="font-semibold text-stone-700">
+                              📅 {match.submission.tanggal || '-'}
+                            </span>
+                            <span className="font-bold text-amber-950 bg-amber-100 px-2 py-0.5 rounded border border-amber-200">
+                              💰 Rp {match.matchedNominal.toLocaleString('id-ID')}
+                            </span>
+                            <span className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded-full border ${
+                              match.submission.status === 'Lunas' 
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                : 'bg-amber-100 text-amber-800 border-amber-300'
+                            }`}>
+                              {match.submission.status || 'Belum Lunas'}
+                            </span>
+                            {match.similarityLevel === 'identik' && (
+                              <span className="text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white px-2 py-0.5 rounded-full shadow-3xs">
+                                100% Identik
+                              </span>
+                            )}
+                            {match.similarityLevel === 'tinggi' && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-600 text-white px-2 py-0.5 rounded-full">
+                                Kemiripan Tinggi
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDuplicateBannerId(isExpanded ? null : match.submission.id)}
+                            className="text-[11px] font-bold text-amber-900 hover:text-amber-950 flex items-center gap-1 cursor-pointer self-start sm:self-auto bg-amber-100/70 hover:bg-amber-200/80 px-2 py-1 rounded-md transition"
+                          >
+                            <Eye size={12} />
+                            <span>{isExpanded ? 'Tutup Rincian' : `Lihat Isi (${itemsCount} item)`}</span>
+                            {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          </button>
                         </div>
-                        <div className="text-[11px] text-amber-800 mt-0.5 font-medium">
+
+                        <div className="text-[11px] text-amber-900 mt-2 font-medium">
                           {match.reason}
                         </div>
+
+                        {/* Badges faktor kecocokan */}
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-amber-100">
+                          {match.matchedFactors.sameType && (
+                            <span className="text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-200 px-2 py-0.5 rounded">
+                              🏷️ Jenis: {match.submission.jenisPengajuan}
+                            </span>
+                          )}
+                          {match.matchedFactors.sameName && (
+                            <span className="text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-200 px-2 py-0.5 rounded">
+                              👤 Penerima: {match.submission.dibayarkanKepada}
+                            </span>
+                          )}
+                          {match.matchedFactors.sameContent && (
+                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded">
+                              📝 Rincian Isi Cocok
+                            </span>
+                          )}
+                          {match.matchedFactors.sameNominal && (
+                            <span className="text-[10px] font-bold bg-amber-200/90 text-amber-950 border border-amber-300 px-2 py-0.5 rounded">
+                              💰 Nominal Cocok (Rp {match.matchedNominal.toLocaleString('id-ID')})
+                            </span>
+                          )}
+                          {match.matchedFactors.sameDate && (
+                            <span className="text-[10px] font-bold bg-rose-100 text-rose-900 border border-rose-200 px-2 py-0.5 rounded">
+                              📅 Tanggal Sama ({match.submission.tanggal})
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Accordion Rincian Isi Voucher Lama */}
+                        {isExpanded && (
+                          <div className="mt-3 p-3 bg-stone-50 rounded-xl border border-stone-200 animate-in fade-in slide-in-from-top-1 duration-150">
+                            <div className="text-[11px] font-bold text-stone-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                              <span>Rincian Item Voucher Sebelumnya ({match.submission.kode || 'HO'}):</span>
+                              <span className="font-mono text-stone-500">Total: Rp {match.matchedNominal.toLocaleString('id-ID')}</span>
+                            </div>
+
+                            <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                              {match.submission.items?.map((it, itemIdx) => (
+                                <div key={itemIdx} className="flex items-center justify-between text-[11px] bg-white p-1.5 rounded border border-stone-200 font-mono">
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <span className="text-stone-400 font-bold">{itemIdx + 1}.</span>
+                                    <span className="text-stone-900 font-sans truncate">{it.item}</span>
+                                    {it.jumlahVolume && (
+                                      <span className="text-stone-500 text-[10px]">({it.jumlahVolume})</span>
+                                    )}
+                                  </div>
+                                  <span className="font-bold text-stone-800 shrink-0 ml-2">
+                                    Rp {(Number(it.total) || 0).toLocaleString('id-ID')}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {match.submission.notes && (
+                              <div className="mt-2 text-[10px] text-stone-600 bg-amber-50/50 p-1.5 rounded border border-amber-200">
+                                <strong>Catatan Dokumen Lama:</strong> {match.submission.notes}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <span className="text-[10px] font-bold font-mono text-amber-900 bg-amber-100 px-2.5 py-1 rounded-md shrink-0 border border-amber-200 self-start sm:self-auto">
-                        Sudah Ada di Sistem
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 p-2 bg-amber-100/60 rounded-lg text-[11px] text-amber-900 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Info size={13} className="shrink-0 text-amber-700" />
+                    <span>Saat Anda menekan <strong>Simpan Data Pengajuan</strong>, sistem akan meminta konfirmasi final agar tidak terjadi transaksi double.</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4497,92 +4635,275 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
       {/* MODAL PERINGATAN & KONFIRMASI POTENSI DOUBLE INPUT */}
       {isDoubleInputConfirmModalOpen && (
-        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in font-sans">
-          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-stone-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in font-sans">
+          <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col my-auto animate-in zoom-in-95 duration-150">
             {/* Modal Header */}
-            <div className="bg-amber-50 border-b border-amber-200 p-5 flex items-start gap-3.5">
-              <div className="p-2.5 rounded-2xl bg-amber-100 text-amber-800 shrink-0 border border-amber-300 shadow-3xs">
-                <AlertTriangle size={24} />
+            <div className="bg-gradient-to-r from-amber-50 via-amber-100/70 to-orange-50 border-b border-amber-200 p-5 flex items-start gap-3.5">
+              <div className="p-2.5 rounded-2xl bg-amber-200 text-amber-900 shrink-0 border border-amber-300 shadow-3xs">
+                <AlertTriangle size={24} className="animate-pulse" />
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-full inline-block mb-1">
-                    Pencegahan Double Input
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-900 bg-amber-200 px-2 py-0.5 rounded-full inline-block mb-1 border border-amber-300">
+                    Konfirmasi Pencegahan Transaksi Dobel
                   </span>
                   <button
                     type="button"
                     onClick={() => setIsDoubleInputConfirmModalOpen(false)}
-                    className="p-1 text-stone-400 hover:text-stone-700 rounded-lg transition"
+                    className="p-1.5 text-stone-400 hover:text-stone-700 rounded-xl hover:bg-stone-200/50 transition cursor-pointer"
+                    title="Tutup dialog"
                   >
-                    <X size={16} />
+                    <X size={18} />
                   </button>
                 </div>
-                <h3 className="text-base font-black text-amber-950">
-                  Peringatan: Potensi Transaksi Dobel
+                <h3 className="text-base sm:text-lg font-black text-amber-950">
+                  Konfirmasi: Terdeteksi Potensi Transaksi Dobel
                 </h3>
+                <p className="text-xs text-amber-800 mt-0.5">
+                  Voucher dengan jenis, nama, atau isi dan nominal serupa sudah pernah diinput sebelumnya.
+                </p>
               </div>
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 space-y-4 text-sm text-stone-700 max-h-[60vh] overflow-y-auto">
-              <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4">
-                <div className="flex items-center justify-between text-xs font-mono text-amber-900 mb-1">
-                  <span>Penerima Saat Ini:</span>
-                  <span className="font-bold text-amber-950">{dibayarkanKepada || '-'}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs font-mono text-amber-900 mb-1">
-                  <span>Nominal Pengajuan:</span>
-                  <span className="font-black text-amber-950">Rp {calculatedGrandTotal.toLocaleString('id-ID')}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs font-mono text-amber-900">
-                  <span>Tanggal Pengajuan:</span>
-                  <span className="font-semibold text-amber-950">{tanggal || '-'}</span>
-                </div>
-              </div>
+            {(() => {
+              const activeIdx = Math.min(selectedDuplicateModalIndex, potentialDuplicateSubmissions.length - 1);
+              const activeMatch = potentialDuplicateSubmissions[activeIdx] || potentialDuplicateSubmissions[0];
+              if (!activeMatch) return null;
 
-              <div className="text-xs leading-relaxed text-stone-600 bg-stone-50 rounded-xl p-3.5 border border-stone-200">
-                <p className="font-semibold text-stone-900 mb-1">
-                  Transaksi Serupa Ditemukan di Database:
-                </p>
-                <p>
-                  Sistem menemukan <strong className="text-amber-950">{potentialDuplicateSubmissions.length} voucher</strong> dengan penerima dan nominal yang sama persis:
-                </p>
-                <div className="mt-2 space-y-2">
-                  {potentialDuplicateSubmissions.map((match, idx) => (
-                    <div key={idx} className="p-2.5 bg-white rounded-lg border border-amber-200 text-xs shadow-3xs">
-                      <div className="flex items-center justify-between font-mono font-bold text-stone-800">
-                        <span className="bg-stone-100 px-1.5 py-0.5 rounded border border-stone-200">{match.submission.kode || 'Voucher'} ({match.submission.tanggal})</span>
-                        <span className="text-amber-900">Rp {match.matchedNominal.toLocaleString('id-ID')}</span>
-                      </div>
-                      <div className="text-[11px] text-amber-800 mt-1 font-medium">
-                        {match.reason}
+              const existingSub = activeMatch.submission;
+              const existingTotal = activeMatch.matchedNominal;
+
+              return (
+                <div className="p-5 sm:p-6 space-y-4 text-xs text-stone-700 max-h-[70vh] overflow-y-auto">
+                  {/* Notice Banner */}
+                  <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-300 text-amber-950 flex items-start gap-2.5">
+                    <Info size={18} className="text-amber-700 shrink-0 mt-0.5" />
+                    <div className="leading-relaxed">
+                      Sistem menemukan <strong className="text-amber-900 font-bold">{potentialDuplicateSubmissions.length} voucher</strong> yang memiliki kemiripan kuat dengan data yang sedang Anda input. Silakan bandingkan rincian di bawah ini sebelum membuat transaksi baru:
+                    </div>
+                  </div>
+
+                  {/* Multiple Match Tabs */}
+                  {potentialDuplicateSubmissions.length > 1 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                      <span className="text-[11px] font-mono text-stone-500 font-semibold shrink-0 mr-1">Voucher Mirip:</span>
+                      {potentialDuplicateSubmissions.map((m, mIdx) => (
+                        <button
+                          key={mIdx}
+                          type="button"
+                          onClick={() => setSelectedDuplicateModalIndex(mIdx)}
+                          className={`px-3 py-1.5 rounded-xl font-bold font-mono text-xs transition cursor-pointer shrink-0 border ${
+                            activeIdx === mIdx
+                              ? 'bg-amber-600 text-white border-amber-600 shadow-3xs'
+                              : 'bg-stone-100 hover:bg-amber-100 text-stone-700 border-stone-200'
+                          }`}
+                        >
+                          #{mIdx + 1}: {m.submission.kode || 'Tanpa Kode'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Side-by-Side Comparison */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                    {/* Left: Current Draft */}
+                    <div className="bg-amber-50/60 border-2 border-amber-300 rounded-2xl p-4 shadow-3xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-amber-200">
+                          <span className="text-[11px] font-black uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                            <span>🟡 Voucher Baru (Sedang Diinput)</span>
+                          </span>
+                          <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded">
+                            Draft Baru
+                          </span>
+                        </div>
+
+                        <div className="space-y-2 text-stone-800">
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Tanggal Pengajuan:</span>
+                            <span className="font-bold text-stone-900">{tanggal || '-'}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Dibayarkan Kepada:</span>
+                            <span className="font-bold text-amber-950 text-sm">{dibayarkanKepada || '-'}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Jenis Pengajuan:</span>
+                            <span className="font-semibold text-stone-800">{jenisPengajuan || '-'}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Total Nilai Transaksi:</span>
+                            <span className="font-black text-amber-950 text-base font-mono">
+                              Rp {calculatedGrandTotal.toLocaleString('id-ID')}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Rincian Item ({items.length} item):</span>
+                            <div className="bg-white/80 p-2 rounded-lg border border-amber-200 max-h-24 overflow-y-auto space-y-1 font-mono text-[11px]">
+                              {items.map((it, idx) => (
+                                <div key={idx} className="flex justify-between items-center">
+                                  <span className="truncate pr-1">{idx + 1}. {it.item || '(Kosong)'}</span>
+                                  <span className="font-bold text-stone-900 shrink-0">Rp {(Number(it.total) || 0).toLocaleString('id-ID')}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {notes && (
+                            <div>
+                              <span className="text-[10px] font-mono text-stone-500 uppercase block">Catatan:</span>
+                              <span className="text-stone-700 italic text-[11px]">{notes}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
 
-              <p className="text-xs text-amber-900 font-medium">
-                Apakah Anda yakin ingin tetap menyimpan voucher ini? Jika data ini tidak sengaja terinput dua kali, silakan batalkan untuk menjaga keakuratan pembukuan.
-              </p>
-            </div>
+                    {/* Right: Existing Submission */}
+                    <div className="bg-stone-50 border-2 border-stone-300 rounded-2xl p-4 shadow-3xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-stone-200">
+                          <span className="text-[11px] font-black uppercase tracking-wider text-stone-900 flex items-center gap-1.5">
+                            <span>🔵 Voucher Sebelumnya di Sistem</span>
+                          </span>
+                          <span className="font-mono font-bold text-xs bg-stone-200 text-stone-900 px-2 py-0.5 rounded border border-stone-300">
+                            {existingSub.kode || 'Tanpa Kode'}
+                          </span>
+                        </div>
+
+                        <div className="space-y-2 text-stone-800">
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Tanggal Transaksi:</span>
+                            <span className="font-bold text-stone-900">{existingSub.tanggal || '-'}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Dibayarkan Kepada:</span>
+                            <span className="font-bold text-stone-950 text-sm">{existingSub.dibayarkanKepada || '-'}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Jenis Pengajuan:</span>
+                            <span className="font-semibold text-stone-800">{existingSub.jenisPengajuan || '-'}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Total Nilai Transaksi:</span>
+                            <span className="font-black text-stone-950 text-base font-mono">
+                              Rp {existingTotal.toLocaleString('id-ID')}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Rincian Item ({existingSub.items?.length || 0} item):</span>
+                            <div className="bg-white p-2 rounded-lg border border-stone-200 max-h-24 overflow-y-auto space-y-1 font-mono text-[11px]">
+                              {existingSub.items && existingSub.items.length > 0 ? (
+                                existingSub.items.map((it, idx) => (
+                                  <div key={idx} className="flex justify-between items-center">
+                                    <span className="truncate pr-1">{idx + 1}. {it.item}</span>
+                                    <span className="font-bold text-stone-900 shrink-0">Rp {(Number(it.total) || 0).toLocaleString('id-ID')}</span>
+                                  </div>
+                                ))
+                              ) : (
+                                <span className="text-stone-400 italic">Tidak ada rincian item terpisah</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {existingSub.notes && (
+                            <div>
+                              <span className="text-[10px] font-mono text-stone-500 uppercase block">Catatan Dokumen:</span>
+                              <span className="text-stone-700 italic text-[11px]">{existingSub.notes}</span>
+                            </div>
+                          )}
+
+                          <div className="pt-1">
+                            <span className="text-[10px] font-mono text-stone-500 uppercase block">Status Dokumen:</span>
+                            <span className={`inline-block text-[10px] font-bold font-mono px-2 py-0.5 rounded-full border mt-0.5 ${
+                              existingSub.status === 'Lunas' 
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                : 'bg-amber-100 text-amber-800 border-amber-300'
+                            }`}>
+                              {existingSub.status || 'Belum Lunas'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Faktor Kemiripan Details */}
+                  <div className="bg-stone-50 rounded-2xl p-3.5 border border-stone-200 space-y-2">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500 block">
+                      Analisis Kecocokan Duplikat:
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {activeMatch.matchedFactors.sameType && (
+                        <span className="text-[11px] font-bold bg-purple-100 text-purple-900 border border-purple-200 px-2.5 py-1 rounded-lg">
+                          🏷️ Jenis Pengajuan Sama ({existingSub.jenisPengajuan})
+                        </span>
+                      )}
+                      {activeMatch.matchedFactors.sameName && (
+                        <span className="text-[11px] font-bold bg-blue-100 text-blue-900 border border-blue-200 px-2.5 py-1 rounded-lg">
+                          👤 Nama Penerima Sama ({existingSub.dibayarkanKepada})
+                        </span>
+                      )}
+                      {activeMatch.matchedFactors.sameContent && (
+                        <span className="text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200 px-2.5 py-1 rounded-lg">
+                          📝 Rincian Isi / Catatan Sama
+                        </span>
+                      )}
+                      {activeMatch.matchedFactors.sameNominal && (
+                        <span className="text-[11px] font-bold bg-amber-200 text-amber-950 border border-amber-300 px-2.5 py-1 rounded-lg">
+                          💰 Total Nominal Sama (Rp {existingTotal.toLocaleString('id-ID')})
+                        </span>
+                      )}
+                      {activeMatch.matchedFactors.sameDate && (
+                        <span className="text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-200 px-2.5 py-1 rounded-lg">
+                          📅 Tanggal Pengajuan Sama ({existingSub.tanggal})
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-stone-600 font-medium leading-relaxed mt-1">
+                      {activeMatch.reason}
+                    </p>
+                  </div>
+
+                  {/* Confirmation Advisory Prompt */}
+                  <div className="p-3 bg-amber-100/50 rounded-xl border border-amber-300 text-amber-950 text-xs leading-relaxed">
+                    <strong>Pertanyaan Konfirmasi:</strong> Apakah Anda yakin ingin tetap membuat voucher transaksi ini?
+                    <ul className="list-disc list-inside mt-1 space-y-0.5 text-stone-700">
+                      <li>Jika transaksi ini <strong>tidak sengaja terdobel</strong>: Silakan klik <strong>Batal & Tinjau Kembali</strong> agar tidak terjadi pencatatan ganda.</li>
+                      <li>Jika ini adalah <strong>transaksi baru yang sah</strong> (contoh: tagihan rutin periode baru): Silakan konfirmasi untuk tetap menyimpan.</li>
+                    </ul>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Modal Footer */}
             <div className="p-4 bg-stone-50 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-2.5">
               <button
                 type="button"
+                id="btn-cancel-double-voucher"
                 onClick={() => setIsDoubleInputConfirmModalOpen(false)}
-                className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-stone-700 hover:text-stone-900 hover:bg-stone-100 rounded-xl border border-stone-300 transition cursor-pointer"
+                className="w-full sm:w-auto px-5 py-2.5 text-xs font-bold text-stone-700 hover:text-stone-900 bg-white hover:bg-stone-100 rounded-xl border border-stone-300 transition cursor-pointer flex items-center justify-center gap-1.5 shadow-3xs"
               >
-                Batal & Tinjau Kembali
+                <span>⛔ Batal & Tinjau Kembali (Cegah Dobel)</span>
               </button>
 
               <button
                 type="button"
+                id="btn-confirm-double-voucher"
                 onClick={handleConfirmDoubleInputSave}
-                className="w-full sm:w-auto px-4 py-2.5 text-xs font-black text-amber-950 bg-amber-400 hover:bg-amber-500 rounded-xl shadow-xs transition cursor-pointer"
+                className="w-full sm:w-auto px-5 py-2.5 text-xs font-black text-amber-950 bg-amber-400 hover:bg-amber-500 rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
               >
-                Bukan Dobel, Tetap Simpan
+                <span>⚠️ Ya, Bukan Dobel — Tetap Buat Voucher</span>
               </button>
             </div>
           </div>

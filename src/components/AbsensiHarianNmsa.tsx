@@ -88,6 +88,7 @@ import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
 import { SelfSigningPortal } from "./SelfSigningPortal";
 import { WhatsAppBotReminderMenu } from "./WhatsAppBotReminderMenu";
+import { CopyAttendanceModal } from "./CopyAttendanceModal";
 import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
 
 // Utility to format Date as local YYYY-MM-DD
@@ -580,6 +581,127 @@ export function deduplicateWeeklyReports(reports: WeeklyReport[]): WeeklyReport[
   });
 }
 
+// Helper to automatically reconstruct weekly reports from attendance records across all recorded months/weeks
+export function reconstructMissingWeeklyReports(
+  records: AttendanceRecord[],
+  existingReports: WeeklyReport[],
+  workers: Worker[],
+  globalAllowance: number = 25000
+): WeeklyReport[] {
+  if (!Array.isArray(records) || records.length === 0) return existingReports || [];
+
+  // Gather all unique dates with attendance data
+  const dateSet = new Set<string>();
+  records.forEach((r) => {
+    if (r.attendance) {
+      Object.entries(r.attendance).forEach(([dStr, val]) => {
+        if (val !== undefined && val !== null && dStr) {
+          dateSet.add(dStr);
+        }
+      });
+    }
+  });
+
+  if (dateSet.size === 0) return existingReports || [];
+
+  // Group dates by Monday of the week
+  const weekMap = new Map<string, { start: string; end: string; dates: string[] }>();
+  dateSet.forEach((dStr) => {
+    const parts = dStr.split('-');
+    if (parts.length !== 3) return;
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const dateObj = new Date(y, m, d);
+    if (isNaN(dateObj.getTime())) return;
+
+    const day = dateObj.getDay();
+    const diffToMonday = dateObj.getDate() - day + (day === 0 ? -6 : 1);
+    const monObj = new Date(y, m, diffToMonday);
+
+    const monY = monObj.getFullYear();
+    const monM = String(monObj.getMonth() + 1).padStart(2, '0');
+    const monD = String(monObj.getDate()).padStart(2, '0');
+    const monStr = `${monY}-${monM}-${monD}`;
+
+    const friObj = new Date(monObj);
+    friObj.setDate(monObj.getDate() + 4);
+    const friY = friObj.getFullYear();
+    const friM = String(friObj.getMonth() + 1).padStart(2, '0');
+    const friD = String(friObj.getDate()).padStart(2, '0');
+    const friStr = `${friY}-${friM}-${friD}`;
+
+    if (!weekMap.has(monStr)) {
+      weekMap.set(monStr, { start: monStr, end: friStr, dates: [] });
+    }
+    weekMap.get(monStr)!.dates.push(dStr);
+  });
+
+  const existingPeriodStarts = new Set((existingReports || []).map((r) => r.weekStartDate).filter(Boolean));
+  const newReports: WeeklyReport[] = [...(existingReports || [])];
+
+  weekMap.forEach((info, monStr) => {
+    // Only synthesize if not already in existing reports
+    if (!existingPeriodStarts.has(monStr)) {
+      const parts = monStr.split('-');
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+
+      const weekDates = [0, 1, 2, 3, 4].map((offset) => {
+        const cur = new Date(y, m, d + offset);
+        const cy = cur.getFullYear();
+        const cm = String(cur.getMonth() + 1).padStart(2, '0');
+        const cd = String(cur.getDate()).padStart(2, '0');
+        return `${cy}-${cm}-${cd}`;
+      });
+
+      const reportRecords = (records || []).map((r) => {
+        const weekAtt: Record<string, boolean> = {};
+        const weekCust: Record<string, any> = {};
+        const weekReas: Record<string, string> = {};
+        weekDates.forEach((wd) => {
+          if (r.attendance && r.attendance[wd] !== undefined) {
+            weekAtt[wd] = Boolean(r.attendance[wd]);
+          }
+          if (r.customStatus && r.customStatus[wd]) {
+            weekCust[wd] = r.customStatus[wd];
+          }
+          if (r.reasons && r.reasons[wd]) {
+            weekReas[wd] = r.reasons[wd];
+          }
+        });
+        return {
+          ...r,
+          attendance: weekAtt,
+          customStatus: weekCust,
+          reasons: weekReas,
+        };
+      });
+
+      const totalCost = reportRecords.reduce((sum, r) => {
+        const presentDays = weekDates.filter((k) => r.attendance?.[k] && (!r.customStatus || (r.customStatus[k] !== 'Meeting' && r.customStatus[k] !== 'Izin' && r.customStatus[k] !== 'Sakit'))).length;
+        return sum + (presentDays * (r.dailyAllowance || globalAllowance));
+      }, 0);
+
+      const periodHash = Math.abs(monStr.split('-').reduce((acc, curr) => acc + parseInt(curr, 10), 0) * 1357).toString().padStart(6, '0').slice(-6);
+
+      newReports.push({
+        id: `REP-${periodHash}`,
+        weekStartDate: info.start,
+        weekEndDate: info.end,
+        totalAmount: totalCost,
+        records: reportRecords,
+        isSubmitted: true,
+        submittedAt: new Date(`${info.end}T17:00:00.000Z`).toISOString(),
+        status: 'locked',
+      });
+    }
+  });
+
+  return deduplicateWeeklyReports(newReports);
+}
+
 interface AbsensiHarianNmsaProps {
   onClose?: () => void;
   pettyCashHolders?: string[];
@@ -678,6 +800,131 @@ export function AbsensiHarianNmsa({
   const [copyStatusMessage, setCopyStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [isCopyingData, setIsCopyingData] = useState<boolean>(false);
   const [copyModalActiveTab, setCopyModalActiveTab] = useState<'reports' | 'drive' | 'manual'>('reports');
+
+  // Auto-reconstruct any missing weekly reports when attendance records are present
+  useEffect(() => {
+    if (attendanceRecords && attendanceRecords.length > 0) {
+      const reconstructed = reconstructMissingWeeklyReports(attendanceRecords, weeklyReports, workers, globalAllowance);
+      if (reconstructed.length > weeklyReports.length) {
+        setWeeklyReports(reconstructed);
+        try {
+          localStorage.setItem("laporan_uang_makan_log", JSON.stringify(reconstructed));
+          localStorage.setItem("weekly_reports_nmsa", JSON.stringify(reconstructed));
+          localStorage.setItem("weekly_reports", JSON.stringify(reconstructed));
+        } catch (_) {}
+      }
+    }
+  }, [attendanceRecords]);
+
+  // Handler when attendance data is copied or restored via CopyAttendanceModal
+  const handleApplyCopiedAttendance = async (
+    updatedRecords: AttendanceRecord[],
+    reconstructedReport?: WeeklyReport,
+    notificationMsg?: string
+  ) => {
+    setAttendanceRecords(updatedRecords);
+    try {
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
+    } catch (_) {}
+
+    let updatedReportsList = weeklyReports;
+    if (reconstructedReport) {
+      updatedReportsList = deduplicateWeeklyReports([reconstructedReport, ...weeklyReports]);
+      setWeeklyReports(updatedReportsList);
+      try {
+        localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updatedReportsList));
+        localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updatedReportsList));
+        localStorage.setItem("weekly_reports", JSON.stringify(updatedReportsList));
+      } catch (_) {}
+    } else {
+      // Re-evaluate missing reports
+      const recompiled = reconstructMissingWeeklyReports(updatedRecords, weeklyReports, workers, globalAllowance);
+      if (recompiled.length > weeklyReports.length) {
+        updatedReportsList = recompiled;
+        setWeeklyReports(recompiled);
+        try {
+          localStorage.setItem("laporan_uang_makan_log", JSON.stringify(recompiled));
+          localStorage.setItem("weekly_reports_nmsa", JSON.stringify(recompiled));
+          localStorage.setItem("weekly_reports", JSON.stringify(recompiled));
+        } catch (_) {}
+      }
+    }
+
+    // Immediately sync to server
+    await syncStateToServer(
+      workers,
+      updatedRecords,
+      updatedReportsList,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
+
+    // Save to Firestore
+    try {
+      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
+      const { doc, setDoc } = await import('firebase/firestore');
+      if (reconstructedReport) {
+        await setDoc(doc(db, "weekly_reports", reconstructedReport.id), cleanDataForFirestore(reconstructedReport), { merge: true });
+      }
+    } catch (_) {}
+
+    setCopyStatusMessage({
+      type: 'success',
+      text: notificationMsg || 'Data absensi berhasil disalin dan dipulihkan ke absensi sistem!',
+    });
+    setTimeout(() => setCopyStatusMessage(null), 8000);
+  };
+
+  // Handler to reconstruct any missing weekly reports across all recorded dates
+  const handleRecoverAllHistoricalReports = async () => {
+    setIsCopyingData(true);
+    try {
+      const reconstructed = reconstructMissingWeeklyReports(
+        attendanceRecords,
+        weeklyReports,
+        workers,
+        globalAllowance
+      );
+      setWeeklyReports(reconstructed);
+      try {
+        localStorage.setItem("laporan_uang_makan_log", JSON.stringify(reconstructed));
+        localStorage.setItem("weekly_reports_nmsa", JSON.stringify(reconstructed));
+        localStorage.setItem("weekly_reports", JSON.stringify(reconstructed));
+      } catch (_) {}
+
+      await syncStateToServer(
+        workers,
+        attendanceRecords,
+        reconstructed,
+        pettyCashReports,
+        attendancePin,
+        signatures,
+        pettyCashHolders,
+        attendanceLogs,
+        waMethod,
+        autoReminderHour
+      );
+
+      setCopyStatusMessage({
+        type: 'success',
+        text: `Sukses! Seluruh riwayat absensi (${reconstructed.length} periode mingguan) berhasil dideteksi dan disinkronkan ke daftar laporan.`,
+      });
+      setTimeout(() => setCopyStatusMessage(null), 8000);
+    } catch (err: any) {
+      setCopyStatusMessage({
+        type: 'error',
+        text: `Gagal memulihkan riwayat: ${err?.message || err}`,
+      });
+      setTimeout(() => setCopyStatusMessage(null), 8000);
+    } finally {
+      setIsCopyingData(false);
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem("attendance_logs_v1", JSON.stringify(attendanceLogs));
@@ -1982,14 +2229,14 @@ export function AbsensiHarianNmsa({
                       reasons: { ...(r.reasons || {}) }
                     });
                   } else {
-                    // Update authoritative online values from server
-                    existing.attendance = { ...(r.attendance || {}) };
-                    existing.customStatus = { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
-                    existing.reasons = { ...(r.reasons || {}) };
+                    // Update authoritative online values from server, preserving historical dates across months
+                    existing.attendance = { ...(existing.attendance || {}), ...(r.attendance || {}) };
+                    existing.customStatus = { ...(existing.customStatus || {}), ...((r.customStatus || {}) as Record<string, "Sakit" | "Izin" | "Meeting">) };
+                    existing.reasons = { ...(existing.reasons || {}), ...(r.reasons || {}) };
                     if (r.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
                     if (r.allowanceRate) existing.allowanceRate = r.allowanceRate;
-                    if (r.signatures) existing.signatures = { ...(r.signatures || {}) };
-                    if (r.notes) existing.notes = { ...(r.notes || {}) };
+                    if (r.signatures) existing.signatures = { ...(existing.signatures || {}), ...(r.signatures || {}) };
+                    if (r.notes) existing.notes = { ...(existing.notes || {}), ...(r.notes || {}) };
                   }
                 });
 
@@ -4070,6 +4317,81 @@ export function AbsensiHarianNmsa({
       alert("Gagal membaca atau memproses file cadangan JSON: " + err.message);
     } finally {
       e.target.value = "";
+    }
+  };
+
+  // Handler for Copying & Restoring Attendance from Google Drive or History
+  const handleCopyAttendanceFromModal = async (
+    updatedRecords: AttendanceRecord[],
+    reconstructedReport?: WeeklyReport,
+    notificationMsg?: string
+  ) => {
+    setAttendanceRecords(updatedRecords);
+    try {
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
+    } catch (e) {}
+
+    let updatedReports = weeklyReports;
+    if (reconstructedReport) {
+      const idx = weeklyReports.findIndex((r) => r.weekStartDate === reconstructedReport.weekStartDate);
+      if (idx !== -1) {
+        updatedReports = weeklyReports.map((r, i) => (i === idx ? reconstructedReport : r));
+      } else {
+        updatedReports = [reconstructedReport, ...weeklyReports];
+      }
+      const deduped = deduplicateWeeklyReports(updatedReports);
+      setWeeklyReports(deduped);
+      try {
+        localStorage.setItem("laporan_uang_makan_log", JSON.stringify(deduped));
+        localStorage.setItem("weekly_reports_nmsa", JSON.stringify(deduped));
+        localStorage.setItem("weekly_reports", JSON.stringify(deduped));
+      } catch (e) {}
+    }
+
+    // Synchronize to server immediately
+    await syncStateToServer(
+      workers,
+      updatedRecords,
+      updatedReports,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
+
+    // Synchronize to Firebase Firestore
+    try {
+      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
+      const { doc, setDoc } = await import('firebase/firestore');
+      if (reconstructedReport) {
+        await setDoc(doc(db, "weekly_reports", reconstructedReport.id), cleanDataForFirestore(reconstructedReport), { merge: true });
+      }
+      await saveAbsenDataToFirestore({
+        workers,
+        records: updatedRecords,
+        weeklyReports: updatedReports,
+        signatures,
+      });
+    } catch (fbErr) {
+      console.warn("Firebase sync notice:", fbErr);
+    }
+
+    // Trigger auto-backup to Google Drive
+    try {
+      googleDriveAutoBackup.backupAbsensi({
+        records: updatedRecords,
+        workers,
+        signatures,
+        weekStartDate: weekStart,
+        weekEndDate: weekEnd,
+      }).catch(() => {});
+    } catch (_) {}
+
+    if (notificationMsg) {
+      console.log(notificationMsg);
     }
   };
 
@@ -7467,22 +7789,82 @@ export function AbsensiHarianNmsa({
               </div>
             </div>
 
+            {/* Status Message when Copying or Restoring Attendance */}
+            {copyStatusMessage && (
+              <div
+                className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold transition duration-200 ${
+                  copyStatusMessage.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                    : 'bg-red-50 text-red-900 border border-red-200'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{copyStatusMessage.text}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCopyStatusMessage(null)}
+                  className="p-1 hover:bg-black/5 rounded-lg transition cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* WEEKLY DATE FILTER & STATISTICS BAR */}
             <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-6">
               
-              <div className="flex items-center gap-4">
-                <button onClick={handlePrevWeek} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition cursor-pointer">
-                  &larr; <span className="sr-only">Sebelumnya</span>
-                </button>
-                <div className="text-center md:text-left">
-                  <div className="text-sm font-semibold text-slate-500">Mulai Senin s/d Jumat</div>
-                  <h2 className="text-lg font-bold font-display text-slate-800 tracking-tight">
-                    {new Date(weekStart).toLocaleDateString("id-ID", { day: "numeric", month: "long" })} s/d {new Date(weekEnd).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
-                  </h2>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-4">
+                  <button onClick={handlePrevWeek} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition cursor-pointer" title="Minggu Sebelumnya">
+                    &larr; <span className="sr-only">Sebelumnya</span>
+                  </button>
+                  <div className="text-center md:text-left">
+                    <div className="text-sm font-semibold text-slate-500">Mulai Senin s/d Jumat</div>
+                    <h2 className="text-lg font-bold font-display text-slate-800 tracking-tight">
+                      {new Date(weekStart).toLocaleDateString("id-ID", { day: "numeric", month: "long" })} s/d {new Date(weekEnd).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                    </h2>
+                  </div>
+                  <button onClick={handleNextWeek} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition cursor-pointer" title="Minggu Berikutnya">
+                    &rarr; <span className="sr-only">Berikutnya</span>
+                  </button>
                 </div>
-                <button onClick={handleNextWeek} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition cursor-pointer">
-                  &rarr; <span className="sr-only">Berikutnya</span>
-                </button>
+
+                {/* Direct Date Picker & Quick Actions */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-1 rounded-xl">
+                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                    <input
+                      type="date"
+                      value={formatLocalYYYYMMDD(selectedDate)}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedDate(new Date(e.target.value));
+                        }
+                      }}
+                      className="text-xs bg-transparent text-slate-700 font-bold focus:outline-none cursor-pointer"
+                      title="Pilih tanggal atau bulan tertentu"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(new Date())}
+                    className="px-2.5 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition cursor-pointer"
+                    title="Kembali ke minggu aktif saat ini"
+                  >
+                    Hari Ini
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCopyAttendanceModalOpen(true)}
+                    className="px-3 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                    title="Buka menu salin data absen antar bulan atau dari berkas Google Drive"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Salin Data Absen Antar Bulan</span>
+                  </button>
+                </div>
               </div>
 
               {/* BENTO CUMULATIVE BOARD */}
@@ -7941,7 +8323,30 @@ export function AbsensiHarianNmsa({
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Tombol Salin Data Absen dari Drive / Arsip File */}
+                        <button
+                          type="button"
+                          onClick={() => setIsCopyAttendanceModalOpen(true)}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          title="Buka menu salin data absen dari Google Drive atau arsip riwayat"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Salin Data Absen dari Drive / Arsip</span>
+                        </button>
+
+                        {/* Tombol Deteksi Semua Minggu dari Database */}
+                        <button
+                          type="button"
+                          onClick={handleRecoverAllHistoricalReports}
+                          disabled={isCopyingData}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer border border-slate-300"
+                          title="Deteksi dan tampilkan seluruh minggu kehadiran yang tersimpan di database"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isCopyingData ? 'animate-spin' : ''}`} />
+                          <span>Deteksi Semua Minggu</span>
+                        </button>
+
                         {/* TOGGLE 3 TERAKHIR vs SEMUA PERIODE */}
                         {sortedWeeklyReports.length > 3 && (
                           <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
@@ -12025,6 +12430,19 @@ export function AbsensiHarianNmsa({
         onClose={() => setIsHoldersModalOpen(false)}
         holders={pettyCashHolders}
         onSaveHolders={handleSaveHoldersFromNmsa}
+      />
+
+      {/* Salin / Pulihkan Data Absen dari Google Drive & Riwayat File Modal */}
+      <CopyAttendanceModal
+        isOpen={isCopyAttendanceModalOpen}
+        onClose={() => setIsCopyAttendanceModalOpen(false)}
+        workers={workers}
+        currentAttendanceRecords={attendanceRecords}
+        weeklyReports={weeklyReports}
+        currentWeekStart={weekStart}
+        currentWeekEnd={weekEnd}
+        onCopyAttendance={handleApplyCopiedAttendance}
+        onOpenGoogleDriveSettings={() => setShowAutoBackupModal(true)}
       />
 
     </div>

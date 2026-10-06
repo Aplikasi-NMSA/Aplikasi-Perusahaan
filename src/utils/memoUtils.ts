@@ -448,102 +448,370 @@ export async function generateMemoPdfBlobFromElement(element: HTMLElement): Prom
     pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(imgHeight, pdfHeight));
     return pdf.output('blob');
   } catch (canvasErr) {
-    console.warn('html2canvas rendering fallback triggered:', canvasErr);
+    console.warn('html2canvas rendering fallback triggered, generating direct vector PDF:', canvasErr);
+    return generateDirectVectorMemoPdfBlob(element);
+  }
+}
 
-    // Bulletproof Fallback: Generate clean vector A4 PDF using jsPDF directly
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
+/**
+ * Direct vector A4 PDF generation from DOM element or text extraction
+ */
+function generateDirectVectorMemoPdfBlob(element: HTMLElement): Blob {
+  const { jsPDF } = require('jspdf');
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = pdf.internal.pageSize.getWidth(); // 210mm
+  const margin = 20;
+  const contentWidth = pageWidth - margin * 2;
+  let yPos = 20;
+
+  // Kop Surat fallback text header
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(14);
+  pdf.setTextColor(0, 0, 0);
+  pdf.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, yPos, { align: 'center' });
+  yPos += 7;
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(9);
+  pdf.text('Mining & General Contractor - Batubara & Mineral', pageWidth / 2, yPos, { align: 'center' });
+  yPos += 5;
+
+  pdf.setLineWidth(0.8);
+  pdf.setDrawColor(0, 0, 0);
+  pdf.line(margin, yPos, pageWidth - margin, yPos);
+  yPos += 1.2;
+  pdf.setLineWidth(0.3);
+  pdf.line(margin, yPos, pageWidth - margin, yPos);
+  yPos += 10;
+
+  // Extract text content from the element
+  const titleElem = element.querySelector('h2');
+  const memoTitle = titleElem ? titleElem.textContent || 'INTERNAL MEMO' : 'INTERNAL MEMO';
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(13);
+  pdf.text(memoTitle, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 6;
+
+  const noElem = element.querySelector('p');
+  const memoNo = noElem ? noElem.textContent || '' : '';
+  pdf.setFontSize(11);
+  pdf.text(memoNo, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 12;
+
+  // Table rows
+  const tableRows = element.querySelectorAll('table tr');
+  if (tableRows.length > 0) {
+    pdf.setLineWidth(0.4);
+    tableRows.forEach((row) => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length >= 3) {
+        const label = cells[0].textContent?.trim() || '';
+        const colon = cells[1].textContent?.trim() || ':';
+        const val = cells[2].textContent?.trim() || '';
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.text(label, margin + 4, yPos);
+        pdf.text(colon, margin + 35, yPos);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(val, margin + 42, yPos);
+        yPos += 7;
+      }
     });
+  }
 
-    const pageWidth = pdf.internal.pageSize.getWidth(); // 210mm
-    const margin = 20;
-    const contentWidth = pageWidth - margin * 2;
-    let yPos = 20;
+  yPos += 8;
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(11);
+  pdf.text('Dengan Hormat,', margin, yPos);
+  yPos += 7;
 
-    // Kop Surat fallback text header
+  // Body content
+  const bodyElem = element.querySelector('.memo-rich-content') || element.querySelector('div.mt-6');
+  const bodyText = bodyElem ? (bodyElem.textContent || '').replace(/\s+/g, ' ').trim() : '';
+  const splitBody = pdf.splitTextToSize(bodyText, contentWidth);
+  pdf.text(splitBody, margin, yPos);
+  yPos += splitBody.length * 5.5 + 10;
+
+  // Signatures
+  pdf.setFont('helvetica', 'normal');
+  pdf.text('Hormat Saya,', margin, yPos);
+  pdf.text('Menyetujui,', pageWidth - margin - 50, yPos);
+  yPos += 25;
+  pdf.setFont('helvetica', 'bold');
+  pdf.text('Andi Muhammad Rifki', margin, yPos);
+  pdf.text('Harijon', pageWidth - margin - 50, yPos);
+  yPos += 5;
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(9);
+  pdf.text('Direktur', margin, yPos);
+  pdf.text('Direktur Keuangan', pageWidth - margin - 50, yPos);
+
+  return pdf.output('blob');
+}
+
+/**
+ * Bulletproof, high-fidelity PDF generator for Internal Memo
+ * Generates an official, publication-quality A4 PDF directly from the memo data model
+ * or falls back from DOM element to guarantee 100% reliable Google Drive uploads.
+ */
+export async function generateInternalMemoPdfBlob(
+  memo: InternalMemo,
+  element?: HTMLElement | null
+): Promise<Blob> {
+  // If element is visible and valid in DOM, attempt html2canvas
+  if (element && element.offsetWidth > 0 && element.offsetHeight > 0) {
+    try {
+      return await generateMemoPdfBlobFromElement(element);
+    } catch (e) {
+      console.warn('generateMemoPdfBlobFromElement failed, falling back to direct vector PDF generator:', e);
+    }
+  }
+
+  // Direct High-Fidelity Vector PDF Generation using jsPDF
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = pdf.internal.pageSize.getWidth(); // 210mm
+  const pageHeight = pdf.internal.pageSize.getHeight(); // 297mm
+  const margin = 20;
+  const contentWidth = pageWidth - margin * 2;
+  let yPos = 16;
+
+  // 1. Try drawing official Kop Surat banner image
+  let drewImageHeader = false;
+  try {
+    const imgDataUrl = await getKopSuratImageDataUrl();
+    if (imgDataUrl) {
+      // Banner dimensions: width 170mm, aspect ratio approx 170 x 28 mm
+      const imgWidth = contentWidth;
+      const imgHeight = 28;
+      pdf.addImage(imgDataUrl, 'PNG', margin, yPos, imgWidth, imgHeight);
+      yPos += imgHeight + 6;
+      drewImageHeader = true;
+    }
+  } catch (imgErr) {
+    console.warn('Could not render kop surat image, using vector typography header:', imgErr);
+  }
+
+  if (!drewImageHeader) {
+    // Official typography letterhead fallback
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(14);
+    pdf.setFontSize(15);
     pdf.setTextColor(0, 0, 0);
     pdf.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 7;
+    yPos += 6;
 
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(9);
     pdf.text('Mining & General Contractor - Batubara & Mineral', pageWidth / 2, yPos, { align: 'center' });
     yPos += 5;
 
+    // Double rule line
     pdf.setLineWidth(0.8);
     pdf.setDrawColor(0, 0, 0);
     pdf.line(margin, yPos, pageWidth - margin, yPos);
     yPos += 1.2;
     pdf.setLineWidth(0.3);
     pdf.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 10;
-
-    // Extract text content from the element
-    const titleElem = element.querySelector('h2');
-    const memoTitle = titleElem ? titleElem.textContent || 'INTERNAL MEMO' : 'INTERNAL MEMO';
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(13);
-    pdf.text(memoTitle, pageWidth / 2, yPos, { align: 'center' });
-    yPos += 6;
-
-    const noElem = element.querySelector('p');
-    const memoNo = noElem ? noElem.textContent || '' : '';
-    pdf.setFontSize(11);
-    pdf.text(memoNo, pageWidth / 2, yPos, { align: 'center' });
-    yPos += 12;
-
-    // Table rows
-    const tableRows = element.querySelectorAll('table tr');
-    if (tableRows.length > 0) {
-      pdf.setLineWidth(0.4);
-      tableRows.forEach((row) => {
-        const cells = row.querySelectorAll('td');
-        if (cells.length >= 3) {
-          const label = cells[0].textContent?.trim() || '';
-          const colon = cells[1].textContent?.trim() || ':';
-          const val = cells[2].textContent?.trim() || '';
-
-          pdf.setFont('helvetica', 'bold');
-          pdf.text(label, margin + 4, yPos);
-          pdf.text(colon, margin + 35, yPos);
-          pdf.setFont('helvetica', 'normal');
-          pdf.text(val, margin + 42, yPos);
-          yPos += 7;
-        }
-      });
-    }
-
     yPos += 8;
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(11);
-    pdf.text('Dengan Hormat,', margin, yPos);
-    yPos += 7;
+  }
 
-    // Body content
-    const bodyElem = element.querySelector('.memo-rich-content') || element.querySelector('div.mt-6');
-    const bodyText = bodyElem ? (bodyElem.textContent || '').replace(/\s+/g, ' ').trim() : '';
-    const splitBody = pdf.splitTextToSize(bodyText, contentWidth);
-    pdf.text(splitBody, margin, yPos);
-    yPos += splitBody.length * 5.5 + 10;
+  // 2. Title & Nomor Memo
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(13);
+  pdf.text('INTERNAL MEMO', pageWidth / 2, yPos, { align: 'center' });
+  const titleWidth = pdf.getTextWidth('INTERNAL MEMO');
+  pdf.setLineWidth(0.4);
+  pdf.line(pageWidth / 2 - titleWidth / 2, yPos + 1.2, pageWidth / 2 + titleWidth / 2, yPos + 1.2);
+  yPos += 6.5;
 
-    // Signatures
-    pdf.setFont('helvetica', 'normal');
-    pdf.text('Hormat Saya,', margin, yPos);
-    pdf.text('Menyetujui,', pageWidth - margin - 50, yPos);
-    yPos += 25;
+  pdf.setFontSize(11);
+  pdf.text(`No. : ${memo.nomorMemo || 'IM-NMSA'}`, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 9;
+
+  // 3. Official recipient & subject table with border
+  const tableData = [
+    { label: 'Hari/taggal', val: memo.hariTanggalDisplay || formatHariTanggalMemo(memo.tanggal) },
+    { label: 'Dari', val: memo.dari || 'H. A. Nursyam Halid – Direktur Utama' },
+    { label: 'Kepada', val: memo.kepada || 'Harijon – Direktur Keuangan' },
+    { label: 'Perihal', val: memo.perihal || 'Pembayaran Operasional' },
+  ];
+
+  const col1W = 32;
+  const col2W = 6;
+  const col3W = contentWidth - col1W - col2W;
+  const rowHeight = 7.5;
+
+  pdf.setLineWidth(0.4);
+  pdf.setDrawColor(0, 0, 0);
+
+  tableData.forEach((row, idx) => {
+    const rowY = yPos + idx * rowHeight;
+    // Row border box
+    pdf.rect(margin, rowY, contentWidth, rowHeight);
+    // Vertical dividers
+    pdf.line(margin + col1W, rowY, margin + col1W, rowY + rowHeight);
+    pdf.line(margin + col1W + col2W, rowY, margin + col1W + col2W, rowY + rowHeight);
+
+    // Text label
     pdf.setFont('helvetica', 'bold');
-    pdf.text('Andi Muhammad Rifki', margin, yPos);
-    pdf.text('Harijon', pageWidth - margin - 50, yPos);
-    yPos += 5;
+    pdf.setFontSize(10.5);
+    pdf.text(row.label, margin + 2.5, rowY + 5.2);
+
+    // Colon
+    pdf.text(':', margin + col1W + col2W / 2, rowY + 5.2, { align: 'center' });
+
+    // Value
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(row.val, margin + col1W + col2W + 2.5, rowY + 5.2);
+  });
+
+  yPos += tableData.length * rowHeight + 8;
+
+  // 4. Salutation
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(11);
+  pdf.text((memo as any).salamPembuka || 'Dengan Hormat,', margin, yPos);
+  yPos += 6.5;
+
+  // 5. Body Text (Clean up HTML tags to formatted paragraphs)
+  const rawBody = memo.isiSurat || '';
+  const cleanBody = rawBody
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<br\s*[\/]?>/gi, '\n')
+    .replace(/<strong>(.*?)<\/strong>/gi, '$1')
+    .replace(/<b>(.*?)<\/b>/gi, '$1')
+    .replace(/<em>(.*?)<\/em>/gi, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .trim();
+
+  const paragraphs = cleanBody.split(/\n+/).filter(Boolean);
+  paragraphs.forEach((pText) => {
+    const splitLines = pdf.splitTextToSize(pText.trim(), contentWidth);
+    pdf.text(splitLines, margin, yPos);
+    yPos += splitLines.length * 5.2 + 3;
+  });
+
+  yPos += 3;
+
+  // 6. Bank Details Box (if specified)
+  if (memo.bankName || memo.accountNumber) {
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(`Bank : ${memo.bankName || '-'}`, margin + 6, yPos);
+    yPos += 5.5;
+    pdf.text(`No. Rekening : ${memo.accountNumber || '-'}`, margin + 6, yPos);
+    yPos += 5.5;
+    pdf.text(`Atas Nama : ${memo.accountHolder || '-'}`, margin + 6, yPos);
+    yPos += 8;
+  }
+
+  // 7. Closing note
+  pdf.setFont('helvetica', 'normal');
+  pdf.text('Demikian disampaikan, atas kerjasamanya diucapkan terima kasih.', margin, yPos);
+  yPos += 14;
+
+  // 8. Signers Section (1, 2, or 3 signers)
+  const isThreeSigners =
+    memo.signerCount === 3 ||
+    memo.useThirdSigner === true ||
+    (memo.signerCount === undefined && memo.useSecondSigner !== false && !!memo.penandatanganNama3);
+
+  const parsedDari = parseDari(memo.dari || '');
+  const signer1Nama = memo.penandatanganNama || parsedDari.nama || 'Andi Muhammad Rifki';
+  const signer1Jabatan = memo.penandatanganJabatan || parsedDari.jabatan || 'Direktur';
+
+  const signer2Nama = memo.penandatanganNama2 || 'Harijon';
+  const signer2Jabatan = memo.penandatanganJabatan2 || 'Direktur Keuangan';
+
+  const signer3Nama = memo.penandatanganNama3 || 'Abdul Aziz Halid';
+  const signer3Jabatan = memo.penandatanganJabatan3 || 'Direktur Utama ANH';
+
+  // Ensure signatures stay on page
+  if (yPos > pageHeight - 45) {
+    yPos = pageHeight - 45;
+  }
+
+  if (isThreeSigners) {
+    const colW = contentWidth / 3;
+    const col1X = margin + colW / 2;
+    const col2X = margin + colW + colW / 2;
+    const col3X = margin + colW * 2 + colW / 2;
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10.5);
+    pdf.text(memo.salamPenutup || 'Hormat Saya,', col1X, yPos, { align: 'center' });
+    pdf.text(memo.salamPenutup2 || 'Menyetujui,', col2X, yPos, { align: 'center' });
+    pdf.text(memo.salamPenutup3 || 'Menyetujui,', col3X, yPos, { align: 'center' });
+
+    yPos += 24;
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(signer1Nama, col1X, yPos, { align: 'center' });
+    pdf.text(signer2Nama, col2X, yPos, { align: 'center' });
+    pdf.text(signer3Nama, col3X, yPos, { align: 'center' });
+
+    yPos += 4.5;
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(9);
-    pdf.text('Direktur', margin, yPos);
-    pdf.text('Direktur Keuangan', pageWidth - margin - 50, yPos);
+    pdf.text(signer1Jabatan, col1X, yPos, { align: 'center' });
+    pdf.text(signer2Jabatan, col2X, yPos, { align: 'center' });
+    pdf.text(signer3Jabatan, col3X, yPos, { align: 'center' });
+  } else {
+    // 2 Signers: Left and Right
+    const leftX = margin + 30;
+    const rightX = pageWidth - margin - 30;
 
-    return pdf.output('blob');
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10.5);
+    pdf.text(memo.salamPenutup || 'Hormat Saya,', leftX, yPos, { align: 'center' });
+    pdf.text(memo.salamPenutup2 || 'Menyetujui,', rightX, yPos, { align: 'center' });
+
+    yPos += 24;
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(signer1Nama, leftX, yPos, { align: 'center' });
+    pdf.text(signer2Nama, rightX, yPos, { align: 'center' });
+
+    yPos += 4.5;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.text(signer1Jabatan, leftX, yPos, { align: 'center' });
+    pdf.text(signer2Jabatan, rightX, yPos, { align: 'center' });
+  }
+
+  return pdf.output('blob');
+}
+
+/**
+ * Helper to fetch kop surat image and convert to data URL for jsPDF
+ */
+async function getKopSuratImageDataUrl(): Promise<string | null> {
+  try {
+    const res = await fetch('/kop-surat-nmsa-full.png');
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
   }
 }
+
