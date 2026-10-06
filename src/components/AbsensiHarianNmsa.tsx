@@ -38,6 +38,7 @@ import {
   Phone,
   MessageSquare,
   Lock,
+  Unlock,
   Copy,
   Check,
   MapPin,
@@ -1288,7 +1289,44 @@ export function AbsensiHarianNmsa({
   const [sendingBotMsgId, setSendingBotMsgId] = useState<string | null>(null);
   const [isAgreedToDataVerification, setIsAgreedToDataVerification] = useState<boolean>(false);
 
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    try {
+      const savedDate = sessionStorage.getItem("nmsa_absen_selected_date");
+      if (savedDate) {
+        const d = new Date(savedDate);
+        if (!isNaN(d.getTime())) return d;
+      }
+    } catch (_) {}
+    return new Date();
+  });
+
+  // Save selectedDate to sessionStorage whenever it changes to prevent unwanted date resets
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("nmsa_absen_selected_date", selectedDate.toISOString());
+    } catch (_) {}
+  }, [selectedDate]);
+
+  // View Lock state: Mengunci tampilan, scroll, dan layout agar stabil tidak refresh saat input manual
+  const [isViewLocked, setIsViewLocked] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("nmsa_absen_view_locked");
+      return saved !== null ? saved === "true" : true; // Default true (terkunci stabil)
+    } catch (_) {
+      return true;
+    }
+  });
+
+  const toggleViewLock = () => {
+    setIsViewLocked((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("nmsa_absen_view_locked", next ? "true" : "false");
+      } catch (_) {}
+      return next;
+    });
+  };
+
   const [activeTab, setActiveTabInternal] = useState<"absen" | "workers" | "dashboard" | "pettycash" | "bot_reminder">(() => {
     try {
       const saved = sessionStorage.getItem("nmsa_absen_active_tab");
@@ -1416,6 +1454,31 @@ export function AbsensiHarianNmsa({
   const pettyCashReportsRef = useRef(pettyCashReports);
   const hasBackedUpOnOpenRef = useRef<boolean>(false);
   const lastUserInteractionTimeRef = useRef<number>(0);
+  // Registry of recent manual edits (workerId_date => timestamp) to prevent background sync from reverting edits
+  const localRecordModificationsRef = useRef<Map<string, { timestamp: number; workerId: string; date: string }>>(new Map());
+  const tableContainerRef = useRef<HTMLDivElement | null>(null);
+  const preservedScrollYRef = useRef<number>(0);
+  const preservedTableScrollXRef = useRef<number>(0);
+
+  // Preserve scroll coordinates to avoid visual jumping
+  useEffect(() => {
+    const handleScroll = () => {
+      preservedScrollYRef.current = window.scrollY;
+      if (tableContainerRef.current) {
+        preservedTableScrollXRef.current = tableContainerRef.current.scrollLeft;
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Stabilkan urutan tampilan karyawan aktif agar baris tabel terkunci tidak melompat/berubah posisi saat re-render
+  const stableActiveWorkers = useMemo(() => {
+    return workers
+      .filter((w) => w.isActive)
+      .slice()
+      .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+  }, [workers]);
 
   useEffect(() => { attendanceRecordsRef.current = attendanceRecords; }, [attendanceRecords]);
   useEffect(() => { workersRef.current = workers; }, [workers]);
@@ -2195,58 +2258,113 @@ export function AbsensiHarianNmsa({
           }
 
           if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
-            // Guard: If quiet background poll and user interacted within last 2.5s or is currently focused on an input/form, skip overwriting
-            const isInputActive = typeof document !== "undefined" && document.activeElement && 
-              (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.tagName === "SELECT");
-            const isRecentInteraction = Date.now() - lastUserInteractionTimeRef.current < 2500;
+            const now = Date.now();
+            const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
 
-            if (!(quiet && (isInputActive || isRecentInteraction))) {
-              const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
-              setAttendanceRecords((prevLocal) => {
-                const map = new Map<string, AttendanceRecord>();
+            setAttendanceRecords((prevLocal) => {
+              const map = new Map<string, AttendanceRecord>();
+              let hasAnyChange = false;
 
-                // 1. Keep local records baseline for workers not yet registered on server
-                (prevLocal || []).forEach((r) => {
-                  if (allWorkerIds.has(r.workerId)) {
-                    map.set(r.workerId, {
-                      ...r,
-                      attendance: { ...(r.attendance || {}) },
-                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
-                      reasons: { ...(r.reasons || {}) }
-                    });
-                  }
-                });
-
-                // 2. Server state is authoritative (1 pintu 1 server online sync)
-                data.attendanceRecords.forEach((r: AttendanceRecord) => {
-                  if (!allWorkerIds.has(r.workerId)) return;
-                  const existing = map.get(r.workerId);
-                  if (!existing) {
-                    map.set(r.workerId, {
-                      ...r,
-                      attendance: { ...(r.attendance || {}) },
-                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
-                      reasons: { ...(r.reasons || {}) }
-                    });
-                  } else {
-                    // Update authoritative online values from server, preserving historical dates across months
-                    existing.attendance = { ...(existing.attendance || {}), ...(r.attendance || {}) };
-                    existing.customStatus = { ...(existing.customStatus || {}), ...((r.customStatus || {}) as Record<string, "Sakit" | "Izin" | "Meeting">) };
-                    existing.reasons = { ...(existing.reasons || {}), ...(r.reasons || {}) };
-                    if (r.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
-                    if (r.allowanceRate) existing.allowanceRate = r.allowanceRate;
-                    if (r.signatures) existing.signatures = { ...(existing.signatures || {}), ...(r.signatures || {}) };
-                    if (r.notes) existing.notes = { ...(existing.notes || {}), ...(r.notes || {}) };
-                  }
-                });
-
-                const mergedList = Array.from(map.values()) as AttendanceRecord[];
-                try {
-                  localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
-                } catch (e) {}
-                return mergedList;
+              // 1. Keep local records baseline for workers not yet registered on server
+              (prevLocal || []).forEach((r) => {
+                if (allWorkerIds.has(r.workerId)) {
+                  map.set(r.workerId, {
+                    ...r,
+                    attendance: { ...(r.attendance || {}) },
+                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+                    reasons: { ...(r.reasons || {}) }
+                  });
+                }
               });
-            }
+
+              // 2. Server state sync - protect recent local manual edits
+              data.attendanceRecords.forEach((r: AttendanceRecord) => {
+                if (!allWorkerIds.has(r.workerId)) return;
+                const existing = map.get(r.workerId);
+                if (!existing) {
+                  map.set(r.workerId, {
+                    ...r,
+                    attendance: { ...(r.attendance || {}) },
+                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+                    reasons: { ...(r.reasons || {}) }
+                  });
+                  hasAnyChange = true;
+                } else {
+                  // Merge attendance days safely
+                  const allDates = new Set([
+                    ...Object.keys(r.attendance || {}),
+                    ...Object.keys(r.customStatus || {}),
+                    ...Object.keys(existing.attendance || {}),
+                    ...Object.keys(existing.customStatus || {})
+                  ]);
+
+                  allDates.forEach((d) => {
+                    const modKey = `${r.workerId}_${d}`;
+                    const mod = localRecordModificationsRef.current.get(modKey);
+                    // Immunity window: 60 seconds after a manual edit, NEVER let server overwrite local value!
+                    const isRecentlyModified = mod && (now - mod.timestamp < 60000);
+
+                    if (isRecentlyModified) {
+                      return;
+                    }
+
+                    // Sync from server
+                    const sAtt = r.attendance?.[d];
+                    const locAtt = existing.attendance?.[d];
+                    if (sAtt !== undefined && sAtt !== locAtt) {
+                      existing.attendance[d] = sAtt;
+                      hasAnyChange = true;
+                    }
+
+                    const sCust = r.customStatus?.[d];
+                    const locCust = existing.customStatus?.[d];
+                    if (sCust !== locCust) {
+                      if (sCust) {
+                        existing.customStatus[d] = sCust as any;
+                      } else {
+                        delete existing.customStatus[d];
+                      }
+                      hasAnyChange = true;
+                    }
+
+                    const sReason = r.reasons?.[d];
+                    const locReason = existing.reasons?.[d];
+                    if (sReason !== locReason) {
+                      if (sReason) {
+                        existing.reasons[d] = sReason;
+                      } else {
+                        delete existing.reasons[d];
+                      }
+                      hasAnyChange = true;
+                    }
+                  });
+
+                  if (r.dailyAllowance && r.dailyAllowance !== existing.dailyAllowance) {
+                    existing.dailyAllowance = r.dailyAllowance;
+                    hasAnyChange = true;
+                  }
+                  if (r.allowanceRate && r.allowanceRate !== existing.allowanceRate) {
+                    existing.allowanceRate = r.allowanceRate;
+                    hasAnyChange = true;
+                  }
+                  if (r.signatures && JSON.stringify(r.signatures) !== JSON.stringify(existing.signatures)) {
+                    existing.signatures = { ...(existing.signatures || {}), ...(r.signatures || {}) };
+                    hasAnyChange = true;
+                  }
+                }
+              });
+
+              // If nothing actually changed, return prevLocal to completely prevent re-renders!
+              if (!hasAnyChange && prevLocal && prevLocal.length === map.size) {
+                return prevLocal;
+              }
+
+              const mergedList = Array.from(map.values()) as AttendanceRecord[];
+              try {
+                localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
+              } catch (e) {}
+              return mergedList;
+            });
           }
           if (data.weeklyReports && Array.isArray(data.weeklyReports)) {
             setWeeklyReports((prevLocal) => {
@@ -2267,6 +2385,9 @@ export function AbsensiHarianNmsa({
               // Add server reports
               combined.push(...data.weeklyReports);
               const merged = deduplicateWeeklyReports(combined);
+              if (JSON.stringify(prevLocal) === JSON.stringify(merged)) {
+                return prevLocal; // Prevent re-render if identical!
+              }
 
               try {
                 localStorage.setItem("laporan_uang_makan_log", JSON.stringify(merged));
@@ -2276,11 +2397,21 @@ export function AbsensiHarianNmsa({
               return merged;
             });
           }
-          if (data.pettyCashReports && Array.isArray(data.pettyCashReports)) setPettyCashReports(data.pettyCashReports);
-          if (data.attendancePin) setAttendancePin(data.attendancePin);
-          if (data.signatures) setSignatures(data.signatures);
-          if (data.pettyCashHolders && Array.isArray(data.pettyCashHolders) && data.pettyCashHolders.length > 0) setPettyCashHolders(data.pettyCashHolders);
-          if (data.attendanceLogs) setAttendanceLogs(data.attendanceLogs);
+          if (data.pettyCashReports && Array.isArray(data.pettyCashReports)) {
+            setPettyCashReports((prev) => (JSON.stringify(prev) === JSON.stringify(data.pettyCashReports) ? prev : data.pettyCashReports));
+          }
+          if (data.attendancePin) {
+            setAttendancePin((prev) => (prev === data.attendancePin ? prev : data.attendancePin));
+          }
+          if (data.signatures) {
+            setSignatures((prev) => (JSON.stringify(prev) === JSON.stringify(data.signatures) ? prev : data.signatures));
+          }
+          if (data.pettyCashHolders && Array.isArray(data.pettyCashHolders) && data.pettyCashHolders.length > 0) {
+            setPettyCashHolders((prev) => (JSON.stringify(prev) === JSON.stringify(data.pettyCashHolders) ? prev : data.pettyCashHolders));
+          }
+          if (data.attendanceLogs) {
+            setAttendanceLogs((prev) => (JSON.stringify(prev) === JSON.stringify(data.attendanceLogs) ? prev : data.attendanceLogs));
+          }
           
           if (data.waMethod) setWaMethod(data.waMethod);
           if (data.autoReminderHour) setAutoReminderHour(data.autoReminderHour);
@@ -2289,7 +2420,7 @@ export function AbsensiHarianNmsa({
           if (data.lastCronStatus !== undefined) setLastCronStatus(data.lastCronStatus);
           if (data.lastCronSentDate !== undefined) setLastCronSentDate(data.lastCronSentDate);
           
-          setLastSynced(new Date().toLocaleTimeString("id-ID"));
+          if (!quiet) setLastSynced(new Date().toLocaleTimeString("id-ID"));
         } else if (!quiet) {
           // Server has no data (first startup), sync our initial local storage data
           await fetch("/api/shared-state", {
@@ -2855,6 +2986,11 @@ export function AbsensiHarianNmsa({
   // --- Handlers ---
   const handleToggleAttendance = (workerId: string, date: string) => {
     lastUserInteractionTimeRef.current = Date.now();
+    localRecordModificationsRef.current.set(`${workerId}_${date}`, {
+      timestamp: Date.now(),
+      workerId,
+      date,
+    });
     const updated = attendanceRecords.map((r) => {
       if (r.workerId === workerId) {
         const currentVal = r.attendance ? r.attendance[date] : false;
@@ -2896,6 +3032,13 @@ export function AbsensiHarianNmsa({
 
   const handleToggleAllForDay = (date: string, forceCheck: boolean) => {
     lastUserInteractionTimeRef.current = Date.now();
+    workers.forEach((w) => {
+      localRecordModificationsRef.current.set(`${w.id}_${date}`, {
+        timestamp: Date.now(),
+        workerId: w.id,
+        date,
+      });
+    });
     const updated = attendanceRecords.map((r) => {
       const newCustomStatus = { ...(r.customStatus || {}) };
       const newReasons = { ...(r.reasons || {}) };
@@ -2933,6 +3076,13 @@ export function AbsensiHarianNmsa({
 
   const handleToggleAllForWorker = (workerId: string, forceCheck: boolean) => {
     lastUserInteractionTimeRef.current = Date.now();
+    weekDates.forEach((d) => {
+      localRecordModificationsRef.current.set(`${workerId}_${d}`, {
+        timestamp: Date.now(),
+        workerId,
+        date: d,
+      });
+    });
     const updated = attendanceRecords.map((r) => {
       if (r.workerId === workerId) {
         const newAttMap = { ...(r.attendance || {}) };
@@ -7857,6 +8007,33 @@ export function AbsensiHarianNmsa({
                   </button>
                   <button
                     type="button"
+                    onClick={toggleViewLock}
+                    className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer border ${
+                      isViewLocked
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs hover:bg-emerald-100"
+                        : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                    }`}
+                    title={
+                      isViewLocked
+                        ? "Tampilan DIKUNCI (Stabil): Posisi tabel, scroll, urutan baris, dan tanggal tidak akan refresh atau bergeser saat input data manual, namun data tetap tersinkron otomatis ke server & cloud."
+                        : "Klik untuk MENGUNCI tampilan agar tidak berubah-rubah saat input manual"
+                    }
+                  >
+                    {isViewLocked ? (
+                      <>
+                        <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Kunci Tampilan (Aktif)</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5" title="Sinkronisasi online tetap aktif di latar belakang"></span>
+                      </>
+                    ) : (
+                      <>
+                        <Unlock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Kunci Tampilan</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setIsCopyAttendanceModalOpen(true)}
                     className="px-3 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
                     title="Buka menu salin data absen antar bulan atau dari berkas Google Drive"
@@ -7915,11 +8092,25 @@ export function AbsensiHarianNmsa({
               
               <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h3 className="text-base font-bold text-slate-900 tracking-tight">Daftar Kehadiran Harian Uang Makan</h3>
-                  <p className="text-xs text-slate-500">Beri centang saat karyawan hadir di lapangan untuk mengkalkulasi insentif makan harian.</p>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="text-base font-bold text-slate-900 tracking-tight">Daftar Kehadiran Harian Uang Makan</h3>
+                    {isViewLocked ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-3xs" title="Tampilan dikunci: layout dan scroll stabil tidak bergeser saat input manual, sinkronisasi tetap berjalan di latar belakang.">
+                        <Lock className="w-3 h-3 text-emerald-700" />
+                        <span>Tampilan Dikunci</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                        <Unlock className="w-3 h-3 text-slate-400" />
+                        <span>Kunci Terbuka</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">Beri centang saat karyawan hadir di lapangan untuk mengkalkulasi insentif makan harian.</p>
                 </div>
 
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap items-center">
                   <span className="text-xs text-slate-500 flex items-center gap-1 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
                     Tarif Dasar: <strong className="text-slate-900">Rp {globalAllowance.toLocaleString("id-ID")}/Hari</strong>
                   </span>
@@ -8020,7 +8211,7 @@ export function AbsensiHarianNmsa({
               </div>
 
               {/* TABLE COMPONENT */}
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" ref={tableContainerRef}>
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 text-xs font-semibold uppercase tracking-wider">
@@ -8060,14 +8251,14 @@ export function AbsensiHarianNmsa({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {workers.filter(w => w.isActive).length === 0 ? (
+                    {stableActiveWorkers.length === 0 ? (
                       <tr>
                         <td colSpan={10} className="py-12 text-center text-slate-500 text-xs">
                           Belum ada karyawan aktif terdaftar. Silakan tambahkan karyawan baru di tab "Kelola Karyawan".
                         </td>
                       </tr>
                     ) : (
-                      workers.filter(w => w.isActive).map((worker, i) => {
+                      stableActiveWorkers.map((worker, i) => {
                         const rec = attendanceRecords.find((r) => r.workerId === worker.id);
 
                         // If record doesn't show yet
@@ -11530,6 +11721,11 @@ export function AbsensiHarianNmsa({
                          lastUserInteractionTimeRef.current = Date.now();
                          const dateToChange = manageStatusModal.date;
                          const targetWorkerId = manageStatusModal.workerId;
+                         localRecordModificationsRef.current.set(`${targetWorkerId}_${dateToChange}`, {
+                           timestamp: Date.now(),
+                           workerId: targetWorkerId,
+                           date: dateToChange,
+                         });
                          const updated = attendanceRecords.map((r) => {
                            if (r.workerId === targetWorkerId) {
                              const newCustomStatus = { ...(r.customStatus || {}) };
