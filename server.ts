@@ -1614,7 +1614,35 @@ function readState() {
 }
 
 // Helper to write state safely
+
+// =========================================================================
+// 🔒 PERMANENT ARCHITECTURAL LOCK: SUBMISSION ID FORMAT (DO NOT REMOVE OR ALTER)
+// INVARIANT: Every submission ID MUST strictly follow `sub-${timestamp}`.
+// DO NOT use auto-generated random Firestore IDs.
+// Documented in /ARCHITECTURE_LOCK_SUBMISSION_ID.md
+// =========================================================================
+export function enforceSubmissionIdFormat(item: any): any {
+  if (!item) return item;
+  if (!item.id || !String(item.id).startsWith("sub-")) {
+    let ts = Date.now();
+    if (item.createdAt) {
+      if (typeof item.createdAt.seconds === "number") {
+        ts = item.createdAt.seconds * 1000;
+      } else {
+        const p = Date.parse(item.createdAt);
+        if (!isNaN(p)) ts = p;
+      }
+    } else if (item.tanggal) {
+      const p = Date.parse(item.tanggal);
+      if (!isNaN(p)) ts = p;
+    }
+    item.id = `sub-${ts}`;
+  }
+  return item;
+}
+
 function writeState(data: any) {
+    if (Array.isArray(data.submissions)) { data.submissions.forEach(enforceSubmissionIdFormat); }
   try {
     if (!data.attendancePin) {
       data.attendancePin = getAutomaticDailyPin();
@@ -1968,7 +1996,7 @@ app.post("/api/unified-storage", (req, res) => {
     const state = readState();
     
     // Selectively merge any provided collections from any menu
-    if (incoming.submissions !== undefined) state.submissions = incoming.submissions;
+    if (incoming.submissions !== undefined) state.submissions = (incoming.submissions || []).map(enforceSubmissionIdFormat);
     if (incoming.pettyCashReports !== undefined) state.pettyCashReports = incoming.pettyCashReports;
     if (incoming.pettyCashHolders !== undefined) state.pettyCashHolders = incoming.pettyCashHolders;
     if (incoming.workers !== undefined) state.workers = incoming.workers;
