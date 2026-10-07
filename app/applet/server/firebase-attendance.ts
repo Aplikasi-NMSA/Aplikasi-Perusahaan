@@ -1,50 +1,51 @@
-import { initializeApp, getApps } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
   getFirestore, 
   doc, 
   setDoc, 
   getDoc, 
   getDocs, 
-  collection, 
-  query, 
-  orderBy, 
-  limit 
+  collection 
 } from "firebase/firestore";
 import fs from "fs";
 import path from "path";
 
-// Read Firebase applet config
-let firestoreDb: any = null;
+// User's custom Firebase configuration (pencatatan-voucher-perusahaan)
+export const USER_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
+  authDomain: "pencatatan-voucher-perusahaan.firebaseapp.com",
+  databaseURL: "https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pencatatan-voucher-perusahaan",
+  storageBucket: "pencatatan-voucher-perusahaan.firebasestorage.app",
+  messagingSenderId: "5344554002",
+  appId: "1:5344554002:web:9137a500fbb8f3223b7ccb",
+  measurementId: "G-1249N852Y5"
+};
+
+let userFirestoreDb: any = null;
 
 export function initFirebaseFirestore() {
   try {
-    if (firestoreDb) return firestoreDb;
-    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-    if (!fs.existsSync(configPath)) {
-      console.warn("[Firebase] Config file not found at", configPath);
-      return null;
+    if (userFirestoreDb) return userFirestoreDb;
+    
+    // Check if app already initialized
+    let app: any;
+    try {
+      app = getApp("UserPencatatanVoucher");
+    } catch {
+      app = initializeApp(USER_FIREBASE_CONFIG, "UserPencatatanVoucher");
     }
-    const cfg = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    const apps = getApps();
-    const app = apps.length > 0 ? apps[0] : initializeApp({
-      apiKey: cfg.apiKey,
-      projectId: cfg.projectId,
-      authDomain: cfg.authDomain,
-      storageBucket: cfg.storageBucket,
-      messagingSenderId: cfg.messagingSenderId
-    });
 
-    const dbId = cfg.firestoreDatabaseId || "(default)";
-    firestoreDb = getFirestore(app, dbId);
-    console.log(`[Firebase] Firestore initialized successfully with database: ${dbId}`);
-    return firestoreDb;
+    userFirestoreDb = getFirestore(app);
+    console.log(`[Firebase] Connected to user's Firebase project: ${USER_FIREBASE_CONFIG.projectId}`);
+    return userFirestoreDb;
   } catch (err: any) {
-    console.error("[Firebase] Error initializing Firestore:", err.message);
+    console.error("[Firebase] Error initializing User Firestore:", err.message);
     return null;
   }
 }
 
-// 1. Sync current attendance state to Firestore
+// 1. Sync current attendance state to user's Firestore (pencatatan-voucher-perusahaan)
 export async function syncAttendanceToFirestore(state: {
   attendanceRecords?: any[];
   workers?: any[];
@@ -80,21 +81,21 @@ export async function syncAttendanceToFirestore(state: {
       }
     }
 
-    console.log("[Firebase] Successfully synchronized attendance & weekly reports to Firestore!");
+    console.log(`[Firebase] Successfully synced attendance & weekly reports to user's project (${USER_FIREBASE_CONFIG.projectId})!`);
     return true;
   } catch (err: any) {
-    console.error("[Firebase] Error syncing attendance to Firestore:", err.message);
+    console.error("[Firebase] Error syncing attendance to user Firestore:", err.message);
     return false;
   }
 }
 
-// 2. Restore attendance state from Firestore on startup
+// 2. Restore attendance state from user's Firestore on startup
 export async function restoreAttendanceFromFirestore(currentState: any): Promise<any> {
   const db = initFirebaseFirestore();
   if (!db) return currentState;
 
   try {
-    console.log("[Firebase] Checking Firestore for saved attendance data...");
+    console.log(`[Firebase] Checking user project (${USER_FIREBASE_CONFIG.projectId}) for saved attendance data...`);
     const masterDocSnap = await getDoc(doc(db, "attendance", "current_records"));
     let updated = { ...currentState };
     let hasChanges = false;
@@ -102,21 +103,17 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
     if (masterDocSnap.exists()) {
       const data = masterDocSnap.data();
       if (data && Array.isArray(data.attendanceRecords) && data.attendanceRecords.length > 0) {
-        console.log(`[Firebase] Restoring ${data.attendanceRecords.length} attendance records from Firestore.`);
-        // Merge attendance records: keep any newer local records, but restore all from Firestore
+        console.log(`[Firebase] Restoring ${data.attendanceRecords.length} attendance records from user's project.`);
         const mergedMap = new Map();
-        // First put cloud records
         data.attendanceRecords.forEach((r: any) => {
           if (r && r.workerId) mergedMap.set(r.workerId, r);
         });
-        // Then overlay any existing local records
         (currentState.attendanceRecords || []).forEach((r: any) => {
           if (r && r.workerId) {
             const cloud = mergedMap.get(r.workerId);
             if (!cloud) {
               mergedMap.set(r.workerId, r);
             } else {
-              // merge attendance dates
               mergedMap.set(r.workerId, {
                 ...cloud,
                 ...r,
@@ -132,7 +129,7 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
       }
     }
 
-    // Also pull weekly reports from weekly_attendance_reports collection
+    // Pull weekly reports from user's weekly_attendance_reports collection
     try {
       const reportsSnap = await getDocs(collection(db, "weekly_attendance_reports"));
       if (!reportsSnap.empty) {
@@ -140,7 +137,7 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
         reportsSnap.forEach(docSnap => {
           cloudReports.push(docSnap.data());
         });
-        console.log(`[Firebase] Restoring ${cloudReports.length} weekly attendance reports from Firestore.`);
+        console.log(`[Firebase] Restoring ${cloudReports.length} weekly attendance reports from user's project.`);
         const repMap = new Map();
         (currentState.weeklyReports || []).forEach((r: any) => {
           if (r) {
@@ -163,7 +160,7 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
 
     return hasChanges ? updated : currentState;
   } catch (err: any) {
-    console.error("[Firebase] Error restoring attendance from Firestore:", err.message);
+    console.error("[Firebase] Error restoring attendance from user Firestore:", err.message);
     return currentState;
   }
 }
