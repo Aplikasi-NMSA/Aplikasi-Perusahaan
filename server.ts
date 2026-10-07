@@ -4611,7 +4611,7 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
 
     const imageUrl = `${protocol}://${host}/api/share-image?${imgParams.toString()}`;
 
-    const isDev = process.env.NODE_ENV !== "production" || !fs.existsSync(path.join(process.cwd(), "dist"));
+    const isDev = process.env.NODE_ENV !== "production" && fs.existsSync(path.join(process.cwd(), "src", "main.tsx"));
     const indexPath = !isDev
       ? path.join(process.cwd(), "dist", "index.html")
       : path.join(process.cwd(), "index.html");
@@ -4655,7 +4655,7 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
 });
 
 async function bootstrap() {
-  const isDev = process.env.NODE_ENV !== "production" || !fs.existsSync(path.join(process.cwd(), "dist"));
+  const isDev = process.env.NODE_ENV !== "production" && fs.existsSync(path.join(process.cwd(), "src", "main.tsx"));
   if (isDev) {
     console.log("Starting dev server with Vite middleware...");
     const vite = await createViteServer({
