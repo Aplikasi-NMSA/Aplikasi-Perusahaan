@@ -1,3 +1,4 @@
+import { initFirebaseFirestore, syncAttendanceToFirestore, restoreAttendanceFromFirestore } from "./server/firebase-attendance";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -1619,6 +1620,12 @@ function writeState(data: any) {
       data.attendancePin = getAutomaticDailyPin();
     }
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
+    // Auto-sync attendance to Firebase Firestore so data is never lost across updates/restarts
+    if (data.attendanceRecords && data.attendanceRecords.length > 0) {
+      setTimeout(() => {
+        syncAttendanceToFirestore(data).catch(() => {});
+      }, 500);
+    }
   } catch (error) {
     console.error("Error writing data-store.json:", error);
   }
@@ -4654,6 +4661,82 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
   next();
 });
 
+
+// --- Firebase Firestore Attendance Persistence Routes ---
+app.post("/api/attendance/firebase-sync", async (req, res) => {
+  try {
+    const currentState = readState();
+    const ok = await syncAttendanceToFirestore(currentState);
+    return res.json({
+      success: ok,
+      message: ok ? "Data absensi dan laporan berhasil disinkronkan ke Firebase Firestore!" : "Gagal sinkron ke Firebase",
+      totalRecords: (currentState.attendanceRecords || []).length,
+      totalWeeklyReports: (currentState.weeklyReports || []).length
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal sinkron ke Firestore", details: err.message });
+  }
+});
+
+app.get("/api/attendance/firebase-restore", async (req, res) => {
+  try {
+    const currentState = readState();
+    const restored = await restoreAttendanceFromFirestore(currentState);
+    if (restored) {
+      writeState(restored);
+    }
+    return res.json({
+      success: true,
+      attendanceRecords: restored.attendanceRecords || [],
+      weeklyReports: restored.weeklyReports || [],
+      workers: restored.workers || []
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal memulihkan absensi dari Firestore", details: err.message });
+  }
+});
+
+app.post("/api/attendance/save-report", async (req, res) => {
+  try {
+    const { report } = req.body;
+    if (!report || !report.id) {
+      return res.status(400).json({ error: "Missing report payload" });
+    }
+    const state = readState();
+    const existing = state.weeklyReports || [];
+    const idx = existing.findIndex((r: any) => r.id === report.id || (r.weekStartDate === report.weekStartDate && r.weekEndDate === report.weekEndDate));
+    if (idx !== -1) {
+      existing[idx] = { ...existing[idx], ...report };
+    } else {
+      existing.unshift(report);
+    }
+    state.weeklyReports = existing;
+    writeState(state);
+
+    const db = initFirebaseFirestore();
+    if (db) {
+      const repId = report.id || `rep_${report.weekStartDate || Date.now()}`;
+      const { doc, setDoc } = await import("firebase/firestore");
+      await setDoc(doc(db, "weekly_attendance_reports", repId), {
+        ...report,
+        syncedAt: new Date().toISOString()
+      }, { merge: true });
+      await setDoc(doc(db, "attendance", "current_records"), {
+        weeklyReports: existing,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }
+
+    return res.json({
+      success: true,
+      message: "Laporan mingguan berhasil disimpan ke Firebase dan server!",
+      report
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal menyimpan laporan ke Firebase", details: err.message });
+  }
+});
+
 async function bootstrap() {
   const isDev = process.env.NODE_ENV !== "production" && fs.existsSync(path.join(process.cwd(), "src", "main.tsx"));
   if (isDev) {
@@ -4701,6 +4784,20 @@ async function bootstrap() {
         if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
           console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi, mengaktifkan bot...");
           initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+        // Restore attendance from Firebase Firestore so data is NEVER lost across updates/restarts
+        setTimeout(async () => {
+          try {
+            console.log("[Startup] Memeriksa Firebase Firestore untuk memulihkan data absensi...");
+            const cur = readState();
+            const restored = await restoreAttendanceFromFirestore(cur);
+            if (restored && restored.attendanceRecords && restored.attendanceRecords.length > 0) {
+              writeState(restored);
+              console.log(`[Startup] Berhasil memulihkan ${restored.attendanceRecords.length} data absensi & ${(restored.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+            }
+          } catch (err: any) {
+            console.warn("[Startup] Gagal auto-restore dari Firestore:", err?.message);
+          }
+        }, 1500);
         }
       } catch (e) {
         console.warn("Could not check WhatsApp credentials on startup:", e);
