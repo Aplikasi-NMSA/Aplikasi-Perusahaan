@@ -82,7 +82,7 @@ import { INITIAL_WORKERS, INDONESIAN_DAYS, COMMON_CATEGORIES } from "../constant
 import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
-import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken } from "../lib/firebaseAbsen";
+import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore } from "../lib/firebaseAbsen";
 import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
@@ -867,11 +867,7 @@ export function AbsensiHarianNmsa({
 
     // Save to Firestore
     try {
-      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
-      const { doc, setDoc } = await import('firebase/firestore');
-      if (reconstructedReport) {
-        await setDoc(doc(db, "weekly_reports", reconstructedReport.id), cleanDataForFirestore(reconstructedReport), { merge: true });
-      }
+      await saveAttendanceToFirestore(updatedRecords, workers, updatedReportsList);
     } catch (_) {}
 
     setCopyStatusMessage({
@@ -1307,25 +1303,8 @@ export function AbsensiHarianNmsa({
     } catch (_) {}
   }, [selectedDate]);
 
-  // View Lock state: Mengunci tampilan, scroll, dan layout agar stabil tidak refresh saat input manual
-  const [isViewLocked, setIsViewLocked] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("nmsa_absen_view_locked");
-      return saved !== null ? saved === "true" : true; // Default true (terkunci stabil)
-    } catch (_) {
-      return true;
-    }
-  });
-
-  const toggleViewLock = () => {
-    setIsViewLocked((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("nmsa_absen_view_locked", next ? "true" : "false");
-      } catch (_) {}
-      return next;
-    });
-  };
+  // View Lock state: Selalu mengunci tampilan, scroll, dan layout agar stabil tidak refresh saat input manual
+  const isViewLocked = true;
 
   const [activeTab, setActiveTabInternal] = useState<"absen" | "workers" | "dashboard" | "pettycash" | "bot_reminder">(() => {
     try {
@@ -2308,11 +2287,15 @@ export function AbsensiHarianNmsa({
                       return;
                     }
 
-                    // Sync from server
-                    const sAtt = r.attendance?.[d];
-                    const locAtt = existing.attendance?.[d];
-                    if (sAtt !== undefined && sAtt !== locAtt) {
-                      existing.attendance[d] = sAtt;
+                    // Sync from server (protect truthy local state & avoid false-positive flickers)
+                    const sIsPresent = Boolean(r.attendance?.[d]);
+                    const locIsPresent = Boolean(existing.attendance?.[d]);
+                    if (sIsPresent !== locIsPresent) {
+                      if (sIsPresent) {
+                        existing.attendance[d] = true;
+                      } else {
+                        delete existing.attendance[d];
+                      }
                       hasAnyChange = true;
                     }
 
@@ -2360,6 +2343,9 @@ export function AbsensiHarianNmsa({
               }
 
               const mergedList = Array.from(map.values()) as AttendanceRecord[];
+              if (JSON.stringify(prevLocal) === JSON.stringify(mergedList)) {
+                return prevLocal;
+              }
               try {
                 localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
               } catch (e) {}
@@ -2450,70 +2436,88 @@ export function AbsensiHarianNmsa({
     }
   };
 
-  // 1. Load shared state from server & Firestore on mount
+  // 1. Load shared state directly from Firestore & server on mount
   useEffect(() => {
     fetchSharedState();
 
-    // Proactively query and sync weekly_reports from Firestore so no historical reports vanish
+    // Directly query Firestore on mount to sync master attendance and weekly reports immediately
     (async () => {
       try {
-        const { db } = await import('../lib/firebaseAbsen');
-        const { collection, getDocs } = await import('firebase/firestore');
-        const snap = await getDocs(collection(db, "weekly_reports"));
-        const fbReports: WeeklyReport[] = [];
-        snap.forEach((doc) => {
-          const d = doc.data();
-          if (d && (d.weekStartDate || d.id)) {
-            fbReports.push(d as WeeklyReport);
-          }
-        });
-        if (fbReports.length > 0) {
-          console.log(`☁️ Synced ${fbReports.length} historical weekly report(s) from Firestore.`);
-          setWeeklyReports((prev) => {
-            const combined = [...(prev || []), ...fbReports];
-            const deduped = deduplicateWeeklyReports(combined);
+        const fbData = await loadAttendanceFromFirestore();
+        if (fbData && fbData.attendanceRecords && fbData.attendanceRecords.length > 0) {
+          setAttendanceRecords((prevLocal) => {
+            const map = new Map<string, AttendanceRecord>();
+            (prevLocal || []).forEach(r => {
+              map.set(r.workerId, { ...r, attendance: { ...(r.attendance || {}) } });
+            });
+            fbData.attendanceRecords.forEach((r: AttendanceRecord) => {
+              const existing = map.get(r.workerId);
+              if (!existing) {
+                map.set(r.workerId, r);
+              } else {
+                const mergedAtt = { ...(existing.attendance || {}) };
+                if (r.attendance) {
+                  Object.entries(r.attendance).forEach(([d, val]) => {
+                    if (val === true) mergedAtt[d] = true;
+                  });
+                }
+                existing.attendance = mergedAtt;
+                if (r.customStatus) existing.customStatus = { ...(existing.customStatus || {}), ...r.customStatus };
+                if (r.reasons) existing.reasons = { ...(existing.reasons || {}), ...r.reasons };
+              }
+            });
+            const mergedList = Array.from(map.values());
             try {
-              localStorage.setItem("laporan_uang_makan_log", JSON.stringify(deduped));
-              localStorage.setItem("weekly_reports_nmsa", JSON.stringify(deduped));
-              localStorage.setItem("weekly_reports", JSON.stringify(deduped));
-            } catch (e) {}
-            return deduped;
+              localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
+            } catch (_) {}
+            return mergedList;
           });
+
+          if (fbData.workers && fbData.workers.length > 0) {
+            setWorkers((prevW) => {
+              const ids = new Set(prevW.map(w => w.id));
+              const missing = fbData.workers.filter(w => !ids.has(w.id));
+              return missing.length > 0 ? [...prevW, ...missing] : prevW;
+            });
+          }
+
+          if (fbData.weeklyReports && fbData.weeklyReports.length > 0) {
+            setWeeklyReports((prev) => {
+              const deduped = deduplicateWeeklyReports([...(prev || []), ...fbData.weeklyReports]);
+              try {
+                localStorage.setItem("laporan_uang_makan_log", JSON.stringify(deduped));
+                localStorage.setItem("weekly_reports_nmsa", JSON.stringify(deduped));
+                localStorage.setItem("weekly_reports", JSON.stringify(deduped));
+              } catch (_) {}
+              return deduped;
+            });
+          }
         }
       } catch (fbErr) {
-        console.warn("Firestore weekly reports auto-sync notice:", fbErr);
+        console.warn("Direct Firestore initial load notice:", fbErr);
       }
     })();
 
     const fallbackTimer = setTimeout(() => {
       setInitialFetchDone(true);
-    }, 3500);
+    }, 2000);
     return () => clearTimeout(fallbackTimer);
   }, []);
 
-  // 1b. Periodic quiet background sync (every 10 seconds) to get worker updates automatically
+  // 1b. Periodic unobtrusive background sync (45s) - never interrupt or flicker on active interaction
   useEffect(() => {
     if (!initialFetchDone) return;
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        if (Date.now() - lastUserInteractionTimeRef.current < 45000) {
+          return; // Skip quiet polling when user is actively interacting
+        }
         fetchSharedState(true);
       }
-    }, 10000);
-
-    const onFocus = () => {
-      fetchSharedState(true);
-    };
-    const onOnline = () => {
-      fetchSharedState(true);
-    };
-
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("online", onOnline);
+    }, 45000);
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("online", onOnline);
     };
   }, [initialFetchDone]);
 
@@ -2993,18 +2997,25 @@ export function AbsensiHarianNmsa({
     });
     const updated = attendanceRecords.map((r) => {
       if (r.workerId === workerId) {
-        const currentVal = r.attendance ? r.attendance[date] : false;
-        const nextVal = !currentVal;
+        const isCurrentlyPresent = Boolean(r.attendance && r.attendance[date]);
+        const nextVal = !isCurrentlyPresent;
+        const newAttendance = { ...(r.attendance || {}) };
         const newCustomStatus = { ...(r.customStatus || {}) };
         const newReasons = { ...(r.reasons || {}) };
         delete newCustomStatus[date];
         delete newReasons[date];
+
+        if (nextVal) {
+          // JIKA ADA ABSEN: TULIS (true)
+          newAttendance[date] = true;
+        } else {
+          // JIKA TIDAK ADA / DIHAPUS: HAPUS DARI OBJECT & FIREBASE
+          delete newAttendance[date];
+        }
+
         return {
           ...r,
-          attendance: {
-            ...(r.attendance || {}),
-            [date]: nextVal,
-          },
+          attendance: newAttendance,
           customStatus: newCustomStatus,
           reasons: newReasons,
         };
@@ -3015,7 +3026,9 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
-    // Instantly sync to server so phone and desktop stay 100% online 1 pintu 1 server
+    // Langsung tulis / hapus di Firestore secara instan tanpa menunggu debounce
+    saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
+    // Sinkronkan ke server secara konsisten
     syncStateToServer(
       workers,
       updated,
@@ -3040,18 +3053,21 @@ export function AbsensiHarianNmsa({
       });
     });
     const updated = attendanceRecords.map((r) => {
+      const newAttendance = { ...(r.attendance || {}) };
       const newCustomStatus = { ...(r.customStatus || {}) };
       const newReasons = { ...(r.reasons || {}) };
       if (forceCheck) {
+        newAttendance[date] = true;
+        delete newCustomStatus[date];
+        delete newReasons[date];
+      } else {
+        delete newAttendance[date];
         delete newCustomStatus[date];
         delete newReasons[date];
       }
       return {
         ...r,
-        attendance: {
-          ...(r.attendance || {}),
-          [date]: forceCheck,
-        },
+        attendance: newAttendance,
         customStatus: newCustomStatus,
         reasons: newReasons,
       };
@@ -3060,6 +3076,7 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
     syncStateToServer(
       workers,
       updated,
@@ -3089,8 +3106,12 @@ export function AbsensiHarianNmsa({
         const newCustomStatus = { ...(r.customStatus || {}) };
         const newReasons = { ...(r.reasons || {}) };
         weekDates.forEach((d) => {
-          newAttMap[d] = forceCheck;
           if (forceCheck) {
+            newAttMap[d] = true;
+            delete newCustomStatus[d];
+            delete newReasons[d];
+          } else {
+            delete newAttMap[d];
             delete newCustomStatus[d];
             delete newReasons[d];
           }
@@ -3108,6 +3129,7 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
     syncStateToServer(
       workers,
       updated,
@@ -4568,6 +4590,49 @@ export function AbsensiHarianNmsa({
       });
     } catch (err: any) {
       handleDriveError(err);
+    }
+  };
+
+  const handleRestoreFromFirestore = async () => {
+    if (!window.confirm("Apakah Anda ingin memulihkan seluruh data absensi dan laporan langsung dari Cloud Firebase Firestore?")) return;
+    setServerSyncing(true);
+    try {
+      // 1. Try directly via Firestore SDK
+      const fbData = await loadAttendanceFromFirestore();
+      if (fbData && fbData.attendanceRecords && fbData.attendanceRecords.length > 0) {
+        setAttendanceRecords(fbData.attendanceRecords);
+        if (fbData.workers && fbData.workers.length > 0) {
+          setWorkers(fbData.workers);
+        }
+        if (fbData.weeklyReports && fbData.weeklyReports.length > 0) {
+          setWeeklyReports(fbData.weeklyReports);
+        }
+        try {
+          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(fbData.attendanceRecords));
+        } catch (_) {}
+        await syncStateToServer(fbData.workers || workers, fbData.attendanceRecords, fbData.weeklyReports || weeklyReports);
+        alert(`SUKSES: Berhasil memulihkan ${fbData.attendanceRecords.length} data absensi dan ${(fbData.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+        return;
+      }
+
+      // 2. Fallback to server restore endpoint
+      const res = await fetch("/api/admin/restore-from-firestore", { method: "POST" });
+      const resData = await res.json();
+      if (res.ok && resData.data?.attendanceRecords?.length > 0) {
+        setAttendanceRecords(resData.data.attendanceRecords);
+        if (resData.data.workers?.length > 0) setWorkers(resData.data.workers);
+        if (resData.data.weeklyReports?.length > 0) setWeeklyReports(resData.data.weeklyReports);
+        try {
+          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(resData.data.attendanceRecords));
+        } catch (_) {}
+        alert(resData.message || "Berhasil memulihkan data dari Firebase Firestore!");
+      } else {
+        alert("Tidak ditemukan berkas cadangan absensi di Firebase Firestore.");
+      }
+    } catch (err: any) {
+      alert("Gagal memulihkan dari Firebase: " + (err?.message || "Kesalahan koneksi"));
+    } finally {
+      setServerSyncing(false);
     }
   };
 
@@ -6476,25 +6541,6 @@ export function AbsensiHarianNmsa({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* BUTTON BUKA ABSEN SAYA (PRESENSI MANDIRI) */}
-            <button
-              type="button"
-              onClick={() => {
-                const mySavedId = localStorage.getItem("nmsa_my_worker_id");
-                let matchedId = mySavedId;
-                if (!matchedId && userProfile?.fullName) {
-                  const found = workers.find(w => w.name.toLowerCase().includes(userProfile.fullName.toLowerCase()) || userProfile.fullName.toLowerCase().includes(w.name.toLowerCase()));
-                  if (found) matchedId = found.id;
-                }
-                setActiveWorkerIdOverride(matchedId || "W06");
-              }}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-xs hover:shadow transition cursor-pointer border border-emerald-400/40"
-              title="Buka Formulir Presensi & Kehadiran Saya Sendiri Hari Ini"
-            >
-              <CheckSquare className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Buka Absen Saya</span>
-            </button>
-
             {/* 2 MAIN TABS: ABSEN UANG MAKAN & KELOLA KARYAWAN */}
             <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto overflow-x-auto">
               <button
@@ -8007,33 +8053,6 @@ export function AbsensiHarianNmsa({
                   </button>
                   <button
                     type="button"
-                    onClick={toggleViewLock}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer border ${
-                      isViewLocked
-                        ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs hover:bg-emerald-100"
-                        : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
-                    }`}
-                    title={
-                      isViewLocked
-                        ? "Tampilan DIKUNCI (Stabil): Posisi tabel, scroll, urutan baris, dan tanggal tidak akan refresh atau bergeser saat input data manual, namun data tetap tersinkron otomatis ke server & cloud."
-                        : "Klik untuk MENGUNCI tampilan agar tidak berubah-rubah saat input manual"
-                    }
-                  >
-                    {isViewLocked ? (
-                      <>
-                        <Lock className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Kunci Tampilan (Aktif)</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse ml-0.5" title="Sinkronisasi online tetap aktif di latar belakang"></span>
-                      </>
-                    ) : (
-                      <>
-                        <Unlock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Kunci Tampilan</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setIsCopyAttendanceModalOpen(true)}
                     className="px-3 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
                     title="Buka menu salin data absen antar bulan atau dari berkas Google Drive"
@@ -8041,44 +8060,61 @@ export function AbsensiHarianNmsa({
                     <Copy className="w-3.5 h-3.5" />
                     <span>Salin Data Absen Antar Bulan</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleRestoreFromFirestore}
+                    className="px-3 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                    title="Pulihkan dan sinkronkan data absensi langsung dari Cloud Firebase Firestore"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Pulihkan dari Firebase</span>
+                  </button>
                 </div>
               </div>
 
-              {/* BENTO CUMULATIVE BOARD */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {/* STATS BOARD: 2 KOTAK MEMANJANG (ANGGARAN UANG MAKAN & JUMLAH KARYAWAN) */}
+              <div className="flex flex-col gap-2.5 w-full sm:min-w-[380px] md:min-w-[460px] max-w-full">
                 
-                <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-center gap-3">
-                  <div className="p-2.5 bg-indigo-600 rounded-lg text-white">
-                    <Users className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider">Aktif Bekerja</div>
-                    <div className="text-base font-bold text-indigo-950">
-                      {workers.filter(w => w.isActive).length} Karyawan
+                {/* Kotak 1: Anggaran Uang Makan (Memanjang) */}
+                <div className="bg-gradient-to-r from-amber-50 to-amber-100/70 border border-amber-200/90 rounded-2xl px-5 py-3 flex items-center justify-between gap-4 shadow-3xs hover:shadow-2xs transition">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="p-2.5 bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl text-white shadow-xs shrink-0">
+                      <DollarSign className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-amber-900 uppercase tracking-wider">
+                        Anggaran Uang Makan
+                      </div>
+                      <div className="text-[11px] text-amber-700 font-medium">
+                        Periode Aktif Minggu Ini
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center gap-3">
-                  <div className="p-2.5 bg-emerald-600 rounded-lg text-white">
-                    <CheckSquare className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">Kehadiran (Minggu Ini)</div>
-                    <div className="text-base font-bold text-emerald-950">
-                      {calculateTotalAttendanceCount()} Mandays
-                    </div>
-                  </div>
-                </div>
-
-                <div className="col-span-2 md:col-span-1 bg-amber-50 border border-amber-100 rounded-xl p-4 flex items-center gap-3">
-                  <div className="p-2.5 bg-amber-500 rounded-lg text-white">
-                    <DollarSign className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">Sisa Anggaran Uang Makan</div>
-                    <div className="text-base font-bold text-amber-950">
+                  <div className="text-right shrink-0">
+                    <div className="text-base sm:text-lg font-black font-mono text-amber-950 tracking-tight whitespace-nowrap">
                       Rp {calculateTotalWeeklyUangMakan().toLocaleString("id-ID")}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Kotak 2: Jumlah Karyawan (Memanjang dibawahnya) */}
+                <div className="bg-gradient-to-r from-indigo-50 to-indigo-100/70 border border-indigo-200/90 rounded-2xl px-5 py-3 flex items-center justify-between gap-4 shadow-3xs hover:shadow-2xs transition">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="p-2.5 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-xl text-white shadow-xs shrink-0">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-indigo-900 uppercase tracking-wider">
+                        Jumlah Karyawan
+                      </div>
+                      <div className="text-[11px] text-indigo-700 font-medium">
+                        Karyawan Terdaftar &amp; Aktif
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-base sm:text-lg font-black text-indigo-950 tracking-tight whitespace-nowrap">
+                      {workers.filter(w => w.isActive).length} Karyawan
                     </div>
                   </div>
                 </div>
@@ -8094,18 +8130,6 @@ export function AbsensiHarianNmsa({
                 <div>
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <h3 className="text-base font-bold text-slate-900 tracking-tight">Daftar Kehadiran Harian Uang Makan</h3>
-                    {isViewLocked ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-3xs" title="Tampilan dikunci: layout dan scroll stabil tidak bergeser saat input manual, sinkronisasi tetap berjalan di latar belakang.">
-                        <Lock className="w-3 h-3 text-emerald-700" />
-                        <span>Tampilan Dikunci</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
-                        <Unlock className="w-3 h-3 text-slate-400" />
-                        <span>Kunci Terbuka</span>
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">Beri centang saat karyawan hadir di lapangan untuk mengkalkulasi insentif makan harian.</p>
                 </div>
@@ -11754,6 +11778,7 @@ export function AbsensiHarianNmsa({
                          } catch (e) {}
                          setAttendanceRecords(updated);
                          setManageStatusModal(null);
+                         saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
                          syncStateToServer(
                            workers,
                            updated,

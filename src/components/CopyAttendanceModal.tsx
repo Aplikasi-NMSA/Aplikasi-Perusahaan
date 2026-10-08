@@ -17,11 +17,13 @@ import {
   ChevronDown,
   ChevronRight,
   ArrowRight,
-  FileText
+  FileText,
+  Database
 } from 'lucide-react';
 import { Worker, AttendanceRecord, WeeklyReport } from '../types';
 import { googleDriveAutoBackup, BackupSyncLog } from '../utils/googleDriveAutoBackup';
 import { ensureValidDriveToken, getActiveGoogleDriveAccount, googleDriveLogin } from '../firebase';
+import { loadAttendanceFromFirestore } from '../lib/firebaseAbsen';
 
 interface CopyAttendanceModalProps {
   isOpen: boolean;
@@ -41,7 +43,7 @@ interface CopyAttendanceModalProps {
 
 interface DiscoveredBackupItem {
   id: string;
-  source: 'drive' | 'report' | 'local_file';
+  source: 'drive' | 'report' | 'local_file' | 'firebase';
   title: string;
   subTitle?: string;
   dateStr?: string;
@@ -65,11 +67,14 @@ export const CopyAttendanceModal: React.FC<CopyAttendanceModalProps> = ({
   onCopyAttendance,
   onOpenGoogleDriveSettings,
 }) => {
-  const [activeTab, setActiveTab] = useState<'drive' | 'reports' | 'upload'>('drive');
+  const [activeTab, setActiveTab] = useState<'firebase' | 'drive' | 'reports' | 'upload'>('firebase');
   const [isScanningDrive, setIsScanningDrive] = useState(false);
   const [driveError, setDriveError] = useState<string | null>(null);
   const [driveFiles, setDriveFiles] = useState<DiscoveredBackupItem[]>([]);
   const [reportFiles, setReportFiles] = useState<DiscoveredBackupItem[]>([]);
+  const [firebaseFiles, setFirebaseFiles] = useState<DiscoveredBackupItem[]>([]);
+  const [isScanningFirebase, setIsScanningFirebase] = useState(false);
+  const [firebaseError, setFirebaseError] = useState<string | null>(null);
   
   // Selected backup for preview & copy
   const [selectedItem, setSelectedItem] = useState<DiscoveredBackupItem | null>(null);
@@ -114,9 +119,53 @@ export const CopyAttendanceModal: React.FC<CopyAttendanceModalProps> = ({
 
     setReportFiles(list);
 
-    // Auto scan Google Drive if opened
+    // Auto scan Cloud Firestore & Google Drive if opened
+    scanFirebaseFirestore();
     scanGoogleDrive();
   }, [isOpen, weeklyReports]);
+
+  // Scan Cloud Firebase Firestore for master attendance records and reports
+  const scanFirebaseFirestore = async () => {
+    setIsScanningFirebase(true);
+    setFirebaseError(null);
+    try {
+      const data = await loadAttendanceFromFirestore();
+      const items: DiscoveredBackupItem[] = [];
+      if (data && data.attendanceRecords && data.attendanceRecords.length > 0) {
+        items.push({
+          id: 'firestore-master-records',
+          source: 'firebase',
+          title: 'Database Absensi Utama Cloud (Firestore)',
+          subTitle: `${data.attendanceRecords.length} Data Rekap Karyawan Terdaftar di Cloud Firebase`,
+          recordsCount: data.attendanceRecords.length,
+          records: data.attendanceRecords,
+        });
+      }
+      if (data && data.weeklyReports && data.weeklyReports.length > 0) {
+        data.weeklyReports.forEach((rep: any) => {
+          items.push({
+            id: rep.id || `fb-rep-${rep.weekStartDate}`,
+            source: 'firebase',
+            title: `Laporan Cloud: Periode ${rep.weekStartDate || '-'} s.d. ${rep.weekEndDate || '-'}`,
+            subTitle: `${(rep.records || []).length} Karyawan • Rp ${Number(rep.totalAmount || 0).toLocaleString('id-ID')}`,
+            periodStart: rep.weekStartDate,
+            periodEnd: rep.weekEndDate,
+            recordsCount: (rep.records || []).length,
+            records: rep.records || [],
+            rawPayload: rep,
+          });
+        });
+      }
+      setFirebaseFiles(items);
+      if (items.length === 0) {
+        setFirebaseError('Belum ada data cadangan absensi yang tersimpan di Cloud Firebase Firestore.');
+      }
+    } catch (err: any) {
+      setFirebaseError(err?.message || 'Gagal terhubung ke Cloud Firebase Firestore.');
+    } finally {
+      setIsScanningFirebase(false);
+    }
+  };
 
   // 2. Scan Google Drive for attendance backups
   const scanGoogleDrive = async () => {
@@ -369,8 +418,12 @@ export const CopyAttendanceModal: React.FC<CopyAttendanceModalProps> = ({
           // MODE 1: Restore exact historical dates (Recovers missing months & dates)
           if (incoming.attendance) {
             Object.entries(incoming.attendance).forEach(([dateStr, isPresent]) => {
-              targetRec!.attendance[dateStr] = Boolean(isPresent);
-              totalDatesRestored++;
+              if (isPresent) {
+                targetRec!.attendance[dateStr] = true;
+                totalDatesRestored++;
+              } else {
+                delete targetRec!.attendance[dateStr];
+              }
             });
           }
           if (incoming.customStatus) {
@@ -394,19 +447,22 @@ export const CopyAttendanceModal: React.FC<CopyAttendanceModalProps> = ({
               const tgtDate = targetWeekDates[i];
               if (srcDate && tgtDate) {
                 const isPresent = Boolean(incoming.attendance[srcDate]);
-                targetRec.attendance[tgtDate] = isPresent;
                 if (isPresent) {
+                  targetRec.attendance[tgtDate] = true;
                   delete targetRec.customStatus?.[tgtDate];
                   delete targetRec.reasons?.[tgtDate];
-                } else if (incoming.customStatus?.[srcDate]) {
-                  if (!targetRec.customStatus) targetRec.customStatus = {};
-                  targetRec.customStatus[tgtDate] = incoming.customStatus[srcDate] as any;
+                  totalDatesRestored++;
+                } else {
+                  delete targetRec.attendance[tgtDate];
+                  if (incoming.customStatus?.[srcDate]) {
+                    if (!targetRec.customStatus) targetRec.customStatus = {};
+                    targetRec.customStatus[tgtDate] = incoming.customStatus[srcDate] as any;
+                  }
+                  if (incoming.reasons?.[srcDate]) {
+                    if (!targetRec.reasons) targetRec.reasons = {};
+                    targetRec.reasons[tgtDate] = incoming.reasons[srcDate];
+                  }
                 }
-                if (incoming.reasons?.[srcDate]) {
-                  if (!targetRec.reasons) targetRec.reasons = {};
-                  targetRec.reasons[tgtDate] = incoming.reasons[srcDate];
-                }
-                totalDatesRestored++;
               }
             }
           }

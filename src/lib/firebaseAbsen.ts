@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, collection, getDocs } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "firebase/firestore";
 import { 
   getAuth, 
   signInWithPopup, 
@@ -9,21 +9,12 @@ import {
   signOut
 } from "firebase/auth";
 import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount, getOrRenewDriveToken } from "../firebase";
+import firebaseAppletConfig from "../../firebase-applet-config.json";
 
-// Your web app's Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyC1UBvFkyi6vHG9BOiFq2wTMTtkhoYRmMg",
-  authDomain: "data-um-nmsa.firebaseapp.com",
-  projectId: "data-um-nmsa",
-  storageBucket: "data-um-nmsa.firebasestorage.app",
-  messagingSenderId: "158324818996",
-  appId: "1:158324818996:web:7c58b367b07b255eb8b661"
-};
-
-// Initialize Firebase with a dedicated app instance name to prevent conflicts with DEFAULT app
-const app = getApps().find(a => a.name === "absenApp") || initializeApp(firebaseConfig, "absenApp");
+// Initialize Firebase with unified applet credentials & target database
+const app = getApps().find(a => a.name === "[DEFAULT]") || initializeApp(firebaseAppletConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = getFirestore(app, firebaseAppletConfig.firestoreDatabaseId || "(default)");
 
 // Setup Google Auth Provider
 export const provider = new GoogleAuthProvider();
@@ -183,3 +174,153 @@ export const googleSignOut = async (): Promise<void> => {
     throw error;
   }
 };
+
+// Direct, instant sync to Cloud Firebase Firestore for attendance
+export const saveAttendanceToFirestore = async (
+  records: any[],
+  workersList: any[],
+  weeklyReportsList?: any[]
+): Promise<boolean> => {
+  try {
+    const timestamp = new Date().toISOString();
+
+    // Clean records so that ONLY active/truthy attendance dates exist
+    // ("jika ada absen tulis jika tidak ada hapus di firebase")
+    const cleanedRecords = (records || []).map((r) => {
+      const cleanAtt: Record<string, boolean> = {};
+      if (r && r.attendance) {
+        Object.entries(r.attendance).forEach(([d, val]) => {
+          if (val === true) {
+            cleanAtt[d] = true;
+          }
+        });
+      }
+      const cleanCustom: Record<string, string> = {};
+      if (r && r.customStatus) {
+        Object.entries(r.customStatus).forEach(([d, val]) => {
+          if (val) cleanCustom[d] = val as string;
+        });
+      }
+      const cleanReasons: Record<string, string> = {};
+      if (r && r.reasons) {
+        Object.entries(r.reasons).forEach(([d, val]) => {
+          if (val) cleanReasons[d] = val as string;
+        });
+      }
+      return {
+        ...r,
+        attendance: cleanAtt,
+        customStatus: cleanCustom,
+        reasons: cleanReasons,
+      };
+    });
+
+    await setDoc(doc(db, "attendance", "current_records"), {
+      attendanceRecords: cleanDataForFirestore(cleanedRecords),
+      workers: cleanDataForFirestore(workersList),
+      updatedAt: timestamp,
+      totalWorkers: (workersList || []).length,
+      totalRecords: (cleanedRecords || []).length
+    }, { merge: true });
+
+    if (weeklyReportsList && weeklyReportsList.length > 0) {
+      for (const rep of weeklyReportsList) {
+        if (!rep) continue;
+        const repId = rep.id || `rep_${rep.weekStartDate || Date.now()}`;
+        const repData = {
+          ...cleanDataForFirestore(rep),
+          syncedAt: timestamp
+        };
+        await setDoc(doc(db, "weekly_attendance_reports", repId), repData, { merge: true });
+        await setDoc(doc(db, "weekly_reports", repId), repData, { merge: true });
+      }
+    }
+    return true;
+  } catch (err: any) {
+    console.warn("Notice: Failed to save attendance directly to Firestore:", err?.message);
+    return false;
+  }
+};
+
+// Direct load/restore from Cloud Firebase Firestore
+export const loadAttendanceFromFirestore = async (): Promise<{
+  attendanceRecords: any[];
+  workers: any[];
+  weeklyReports: any[];
+} | null> => {
+  try {
+    const masterDoc = await getDoc(doc(db, "attendance", "current_records"));
+    let recs: any[] = [];
+    let wrks: any[] = [];
+    if (masterDoc.exists()) {
+      const data = masterDoc.data();
+      recs = data.attendanceRecords || [];
+      wrks = data.workers || [];
+    }
+
+    // Fallback: check historical absen_records collection if master document is empty
+    if (recs.length === 0) {
+      try {
+        const snap = await getDocs(collection(db, "absen_records"));
+        if (!snap.empty) {
+          snap.forEach((d) => {
+            const data = d.data();
+            if (data?.attendanceRecords && Array.isArray(data.attendanceRecords)) {
+              if (data.attendanceRecords.length > recs.length) {
+                recs = data.attendanceRecords;
+                if (data.workers?.length) wrks = data.workers;
+              }
+            }
+          });
+        }
+      } catch (fbErr) {
+        console.warn("Fallback absen_records notice:", fbErr);
+      }
+    }
+
+    // Load weekly attendance reports
+    const repMap = new Map<string, any>();
+    try {
+      const reportsSnap = await getDocs(collection(db, "weekly_attendance_reports"));
+      reportsSnap.forEach(d => {
+        const rd = d.data();
+        if (rd) repMap.set(rd.id || `${rd.weekStartDate}_${rd.weekEndDate}`, rd);
+      });
+    } catch (_) {}
+
+    try {
+      const snap2 = await getDocs(collection(db, "weekly_reports"));
+      snap2.forEach(d => {
+        const rd = d.data();
+        if (rd) {
+          const key = rd.id || `${rd.weekStartDate}_${rd.weekEndDate}`;
+          if (!repMap.has(key)) repMap.set(key, rd);
+        }
+      });
+    } catch (_) {}
+
+    // Clean loaded records to ensure only truthy attendance dates
+    const sanitizedRecs = (recs || []).map((r) => {
+      const cleanAtt: Record<string, boolean> = {};
+      if (r && r.attendance) {
+        Object.entries(r.attendance).forEach(([d, val]) => {
+          if (val === true) cleanAtt[d] = true;
+        });
+      }
+      return {
+        ...r,
+        attendance: cleanAtt
+      };
+    });
+
+    return {
+      attendanceRecords: sanitizedRecs,
+      workers: wrks,
+      weeklyReports: Array.from(repMap.values())
+    };
+  } catch (err: any) {
+    console.warn("Notice: Failed to load attendance from Firestore:", err?.message);
+    return null;
+  }
+};
+

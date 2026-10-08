@@ -1936,9 +1936,35 @@ app.post("/api/shared-state", (req, res) => {
     };
 
     writeState(updatedState);
+    syncAttendanceToFirestore(updatedState).catch((err) => {
+      console.warn("[Firestore] Auto-sync notice:", err?.message);
+    });
     res.json({ success: true, message: "State synchronized successfully" });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to synchronize state" });
+  }
+});
+
+// Restore Attendance directly from Firebase Firestore
+app.post("/api/admin/restore-from-firestore", async (req, res) => {
+  try {
+    const cur = readState();
+    const restored = await restoreAttendanceFromFirestore(cur);
+    if (restored && restored.attendanceRecords && restored.attendanceRecords.length > 0) {
+      writeState(restored);
+      return res.json({
+        success: true,
+        message: `Berhasil memulihkan ${restored.attendanceRecords.length} data absensi dari Firebase Firestore!`,
+        data: restored
+      });
+    }
+    return res.json({
+      success: true,
+      message: "Tidak ada data absensi tambahan di Firebase Firestore.",
+      data: cur
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal memulihkan dari Firestore: " + err.message });
   }
 });
 

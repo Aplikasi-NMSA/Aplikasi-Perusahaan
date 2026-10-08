@@ -57,26 +57,41 @@ export async function syncAttendanceToFirestore(state: {
   try {
     const timestamp = new Date().toISOString();
 
-    // 1. Save master attendance records snapshot
+    // 1. Save master attendance records snapshot (strip falsy attendance dates)
     if (state.attendanceRecords && state.attendanceRecords.length > 0) {
+      const cleaned = state.attendanceRecords.map((r: any) => {
+        const cleanAtt: Record<string, boolean> = {};
+        if (r && r.attendance) {
+          Object.entries(r.attendance).forEach(([d, val]) => {
+            if (val === true) cleanAtt[d] = true;
+          });
+        }
+        return {
+          ...r,
+          attendance: cleanAtt
+        };
+      });
+
       await setDoc(doc(db, "attendance", "current_records"), {
-        attendanceRecords: state.attendanceRecords,
+        attendanceRecords: cleaned,
         workers: state.workers || [],
         updatedAt: timestamp,
         totalWorkers: (state.workers || []).length,
-        totalRecords: state.attendanceRecords.length
+        totalRecords: cleaned.length
       }, { merge: true });
     }
 
-    // 2. Save each weekly report to weekly_attendance_reports collection
+    // 2. Save each weekly report to weekly_attendance_reports & weekly_reports collections
     if (state.weeklyReports && state.weeklyReports.length > 0) {
       for (const rep of state.weeklyReports) {
         if (!rep) continue;
         const repId = rep.id || `rep_${rep.weekStartDate || Date.now()}`;
-        await setDoc(doc(db, "weekly_attendance_reports", repId), {
+        const repData = {
           ...rep,
           syncedAt: timestamp
-        }, { merge: true });
+        };
+        await setDoc(doc(db, "weekly_attendance_reports", repId), repData, { merge: true });
+        await setDoc(doc(db, "weekly_reports", repId), repData, { merge: true });
       }
     }
 
