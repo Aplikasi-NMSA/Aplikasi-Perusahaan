@@ -1,4 +1,5 @@
 import { initializeApp, getApp, getApps, FirebaseApp } from 'firebase/app';
+import firebaseAppletConfig from '../firebase-applet-config.json';
 import { 
   getFirestore, 
   collection, 
@@ -76,6 +77,11 @@ export const getStoredFirebaseConfig = (): any | null => {
     }
   } catch (e) {
     console.warn('Error reading stored custom firebase config:', e);
+  }
+
+  // Check if firebase-applet-config.json exists and has valid configuration
+  if (firebaseAppletConfig && (firebaseAppletConfig as any).apiKey && (firebaseAppletConfig as any).projectId) {
+    return firebaseAppletConfig;
   }
 
   // Check if environment variables are provided first, else fall back to default hardcoded config
@@ -700,7 +706,8 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
       firebaseApp = initializeApp(config);
     }
     // Set firestore and auth instances
-    firestoreDb = getFirestore(firebaseApp);
+    const dbId = config.firestoreDatabaseId || (firebaseAppletConfig as any)?.firestoreDatabaseId || "(default)";
+    firestoreDb = getFirestore(firebaseApp, dbId);
     firebaseAuth = getAuth(firebaseApp);
     
     // Register listener for auth states
