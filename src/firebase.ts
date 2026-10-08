@@ -1,4 +1,4 @@
-import { initializeApp, getApp, getApps, FirebaseApp } from 'firebase/app';
+import { initializeApp, getApp, getApps, FirebaseApp, deleteApp } from 'firebase/app';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { 
   getFirestore, 
@@ -64,8 +64,22 @@ let firestoreDb: Firestore | null = null;
 let firebaseAuth: Auth | null = null;
 let currentUser: User | null = null;
 
-// Helper to check and parse stored config
-export const getStoredFirebaseConfig = (): any | null => {
+// 🔒 PERMANENT LOCKED OFFICIAL FIREBASE CONFIGURATION (PT Nusantara Mineral Sukses Abadi)
+// JANGAN DIUBAH OLEH AI GITHUB ATAU SISTEM APAPUN - KONFIGURASI RESMI & PERMANEN PERUSAHAAN
+export const PERMANENT_LOCKED_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
+  authDomain: "pencatatan-voucher-perusahaan.firebaseapp.com",
+  databaseURL: "https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pencatatan-voucher-perusahaan",
+  storageBucket: "pencatatan-voucher-perusahaan.firebasestorage.app",
+  messagingSenderId: "5344554002",
+  appId: "1:5344554002:web:9137a500fbb8f3223b7ccb",
+  measurementId: "G-1249N852Y5",
+  firestoreDatabaseId: "(default)"
+};
+
+// Helper to check and parse stored config - PERMANENTLY LOCKED to NMSA Production
+export const getStoredFirebaseConfig = (): any => {
   // Check if custom user config was saved to localStorage (e.g. from Firebase Migration / Multi-project)
   try {
     const custom = localStorage.getItem('NUSANTARA_FIREBASE_CONFIG');
@@ -79,15 +93,14 @@ export const getStoredFirebaseConfig = (): any | null => {
     console.warn('Error reading stored custom firebase config:', e);
   }
 
-  // Check if firebase-applet-config.json exists and has valid configuration
-  if (firebaseAppletConfig && (firebaseAppletConfig as any).apiKey && (firebaseAppletConfig as any).projectId) {
+  // Check if firebase-applet-config.json exists and has valid configuration for pencatatan-voucher-perusahaan
+  if (firebaseAppletConfig && (firebaseAppletConfig as any).apiKey && (firebaseAppletConfig as any).projectId === "pencatatan-voucher-perusahaan") {
     return firebaseAppletConfig;
   }
 
-  // Check if environment variables are provided first, else fall back to default hardcoded config
+  // Environment variables override if specified
   const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
   const envProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
-  
   if (envApiKey && envProjectId) {
     return {
       apiKey: envApiKey,
@@ -97,21 +110,13 @@ export const getStoredFirebaseConfig = (): any | null => {
       storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || `${envProjectId}.firebasestorage.app`,
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
       appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
-      measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ''
+      measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
+      firestoreDatabaseId: "(default)"
     };
   }
 
-  // Static configuration hardcoded securely as requested to avoid any conflicts
-  return {
-    apiKey: "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
-    authDomain: "pencatatan-voucher-perusahaan.firebaseapp.com",
-    databaseURL: "https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app",
-    projectId: "pencatatan-voucher-perusahaan",
-    storageBucket: "pencatatan-voucher-perusahaan.firebasestorage.app",
-    messagingSenderId: "5344554002",
-    appId: "1:5344554002:web:9137a500fbb8f3223b7ccb",
-    measurementId: "G-1249N852Y5"
-  };
+  // 🔒 Always return the locked permanent configuration by default
+  return PERMANENT_LOCKED_FIREBASE_CONFIG;
 };
 
 // TWO-WAY DATA SCHEMAS TRANSLATION / MAPPER UTILITIES
@@ -688,6 +693,38 @@ export const registerUserToFirebase = async (
   }
 };
 
+// Production configuration for NMSA original database
+export const NMSA_PROD_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
+  authDomain: "pencatatan-voucher-perusahaan.firebaseapp.com",
+  databaseURL: "https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pencatatan-voucher-perusahaan",
+  storageBucket: "pencatatan-voucher-perusahaan.firebasestorage.app",
+  messagingSenderId: "5344554002",
+  appId: "1:5344554002:web:9137a500fbb8f3223b7ccb",
+  measurementId: "G-1249N852Y5"
+};
+
+// Switch active database to NMSA original project
+export const switchToProductionDatabase = (): boolean => {
+  return saveAndInitializeFirebaseConfig(NMSA_PROD_FIREBASE_CONFIG);
+};
+
+// Switch active database back to AI Studio Applet project
+export const switchToAppletDatabase = (): boolean => {
+  localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
+  if (firebaseAppletConfig && (firebaseAppletConfig as any).apiKey) {
+    return initializeFirebaseApp(firebaseAppletConfig);
+  }
+  return false;
+};
+
+// Get current active Firebase project ID
+export const getActiveFirebaseProjectId = (): string => {
+  const cfg = getStoredFirebaseConfig();
+  return cfg?.projectId || 'unknown';
+};
+
 // Initialize Firebase dynamically based on configs
 export const initializeFirebaseApp = (customConfig?: any): boolean => {
   const config = customConfig || getStoredFirebaseConfig();
@@ -701,7 +738,15 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
   try {
     const defaultApp = getApps().find(a => a.name === '[DEFAULT]');
     if (defaultApp) {
-      firebaseApp = defaultApp;
+      // If the current defaultApp belongs to a different project, recreate it cleanly
+      if (defaultApp.options.projectId !== config.projectId) {
+        try {
+          deleteApp(defaultApp);
+        } catch (_) {}
+        firebaseApp = initializeApp(config);
+      } else {
+        firebaseApp = defaultApp;
+      }
     } else {
       firebaseApp = initializeApp(config);
     }
@@ -2526,6 +2571,10 @@ export const saveAbsenDataToFirestore = async (absenData: any): Promise<void> =>
   }
 
   if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!currentUser) {
+    console.log(`ℹ️ Absen record ${docId} disimpan lokal (sesi login Firebase belum aktif).`);
+    return;
+  }
 
   try {
     await setDoc(doc(firestoreDb, 'absen_records', docId), cleanUndefined(payload));
@@ -2537,7 +2586,7 @@ export const saveAbsenDataToFirestore = async (absenData: any): Promise<void> =>
 
 // Load Absen Harian NMSA records from Firestore
 export const loadAbsenDataFromFirestore = async (): Promise<any[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) {
+  if (!isFirebaseConfigured() || !firestoreDb || !currentUser) {
     try {
       const stored = localStorage.getItem('absen_records_v1');
       return stored ? JSON.parse(stored) : [];

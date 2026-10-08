@@ -153,11 +153,14 @@ export const FirebaseSyncConfig: React.FC<FirebaseSyncConfigProps> = ({ onSyncDa
       await handleFetchLiveCloud();
     } catch (err: any) {
       const isInvalidCred = err?.code === 'auth/invalid-credential' || String(err?.message).includes('invalid-credential');
+      const isOpNotAllowed = err?.code === 'auth/operation-not-allowed' || String(err?.message).includes('operation-not-allowed');
       setStatusMsg({
         type: 'error',
-        text: isInvalidCred
-          ? 'Email atau kata sandi tidak cocok. Silakan periksa kembali atau gunakan tombol "Masuk dengan Akun Google".'
-          : (err.message || 'Periksa email & password Anda.')
+        text: isOpNotAllowed
+          ? 'Fitur login Email & Sandi belum diaktifkan di Firebase Console untuk project ini. Gunakan "Masuk dengan Akun Google" atau aktifkan Email/Password di Firebase Console.'
+          : (isInvalidCred
+            ? 'Email atau kata sandi tidak cocok. Silakan periksa kembali atau gunakan tombol "Masuk dengan Akun Google".'
+            : (err.message || 'Periksa email & password Anda.'))
       });
     } finally {
       setIsLoading(false);

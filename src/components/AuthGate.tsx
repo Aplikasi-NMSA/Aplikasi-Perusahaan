@@ -9,11 +9,14 @@ import {
   ensureUserProfile,
   registerUserToFirebase,
   loadSubmissionsFromFirestore,
-  getUserProfileFromFirestore
+  getUserProfileFromFirestore,
+  switchToProductionDatabase,
+  switchToAppletDatabase,
+  getActiveFirebaseProjectId
 } from '../firebase';
 import { Submission } from '../types';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Key, Lock, Mail, UserCheck, ShieldCheck, Database, Info, Loader2, RefreshCw, ChevronRight, Eye, EyeOff } from 'lucide-react';
+import { Key, Lock, Mail, UserCheck, ShieldCheck, Database, Info, Loader2, RefreshCw, ChevronRight, Eye, EyeOff, AlertTriangle, ExternalLink } from 'lucide-react';
 
 interface AuthGateProps {
   onLoginSuccess: (user: any, initialData: Submission[]) => void;
@@ -24,6 +27,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
   const [isConfigured, setIsConfigured] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string>(() => getActiveFirebaseProjectId());
+  const [isOperationNotAllowed, setIsOperationNotAllowed] = useState(false);
 
   // Form Fields - Login
   const [loginEmail, setLoginEmail] = useState('');
@@ -65,7 +70,54 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
 
     // Always start with login screen for a clean, professional, and elegant presentation
     setMode('login');
+    setActiveProjectId(getActiveFirebaseProjectId());
   }, []);
+
+  const handleSwitchToNmsaProd = () => {
+    setIsLoading(true);
+    setStatusMsg({ type: 'info', text: 'Mengalihkan ke database asli NMSA (pencatatan-voucher-perusahaan)...' });
+    try {
+      switchToProductionDatabase();
+      const pid = getActiveFirebaseProjectId();
+      setActiveProjectId(pid);
+      setIsOperationNotAllowed(false);
+      setIsConfigured(true);
+      setStatusMsg({
+        type: 'success',
+        text: 'Berhasil beralih ke database pencatatan-voucher-perusahaan! Silakan masukkan email & sandi Anda lalu klik Masuk.'
+      });
+    } catch (e: any) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Gagal beralih database: ' + (e?.message || e)
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSwitchToApplet = () => {
+    setIsLoading(true);
+    setStatusMsg({ type: 'info', text: 'Mengalihkan ke database AI Studio...' });
+    try {
+      switchToAppletDatabase();
+      const pid = getActiveFirebaseProjectId();
+      setActiveProjectId(pid);
+      setIsOperationNotAllowed(false);
+      setIsConfigured(true);
+      setStatusMsg({
+        type: 'info',
+        text: `Berhasil beralih ke database AI Studio (${pid}).`
+      });
+    } catch (e: any) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Gagal beralih database: ' + (e?.message || e)
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,12 +212,23 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
       }, 500);
     } catch (err: any) {
       const isInvalidCred = err?.code === 'auth/invalid-credential' || String(err?.message).includes('invalid-credential');
-      setStatusMsg({
-        type: 'error',
-        text: isInvalidCred
-          ? 'Email atau kata sandi tidak cocok. Jika Anda belum mendaftar, silakan klik tab "Daftar Akun" di atas atau gunakan tombol "Masuk dengan Akun Google" di bawah.'
-          : (err.message || 'Periksa kembali e-mail dan sandi Anda.')
-      });
+      const isOpNotAllowed = err?.code === 'auth/operation-not-allowed' || String(err?.message).includes('operation-not-allowed');
+
+      if (isOpNotAllowed) {
+        setIsOperationNotAllowed(true);
+        setStatusMsg({
+          type: 'error',
+          text: `Metode Login Email & Sandi belum diaktifkan di Firebase Console untuk project "${activeProjectId}".`
+        });
+      } else {
+        setIsOperationNotAllowed(false);
+        setStatusMsg({
+          type: 'error',
+          text: isInvalidCred
+            ? 'Email atau kata sandi tidak cocok. Jika Anda belum mendaftar, silakan klik tab "Daftar Akun" di atas atau gunakan tombol "Masuk dengan Akun Google" di bawah.'
+            : (err.message || 'Periksa kembali e-mail dan sandi Anda.')
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -353,10 +416,19 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
       }, 500);
     } catch (err: any) {
       console.error(err);
-      setStatusMsg({
-        type: 'error',
-        text: `Pendaftaran gagal: ${err.message || 'Pastikan email belum terdaftar dan format password valid.'}`
-      });
+      const isOpNotAllowed = err?.code === 'auth/operation-not-allowed' || String(err?.message).includes('operation-not-allowed');
+      if (isOpNotAllowed) {
+        setIsOperationNotAllowed(true);
+        setStatusMsg({
+          type: 'error',
+          text: `Pendaftaran gagal: Fitur pendaftaran Email & Sandi dinonaktifkan di Firebase Console pada project "${activeProjectId}".`
+        });
+      } else {
+        setStatusMsg({
+          type: 'error',
+          text: `Pendaftaran gagal: ${err.message || 'Pastikan email belum terdaftar dan format password valid.'}`
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -390,6 +462,37 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
               </span>
             </div>
           </div>
+        </div>
+
+        {/* Active Database Project Status & Quick Switch Bar */}
+        <div className="bg-stone-850 px-4 py-2.5 flex items-center justify-between text-[11px] font-mono border-b border-stone-800 text-stone-300">
+          <div className="flex items-center gap-2 truncate">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+            <span className="truncate">
+              DB: <strong className="text-amber-400 font-bold">{activeProjectId}</strong>
+              {activeProjectId === 'pencatatan-voucher-perusahaan' && (
+                <span className="ml-1.5 text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800 font-bold">
+                  🔒 Permanen
+                </span>
+              )}
+            </span>
+          </div>
+
+          {activeProjectId !== 'pencatatan-voucher-perusahaan' ? (
+            <button
+              type="button"
+              onClick={handleSwitchToNmsaProd}
+              disabled={isLoading}
+              className="text-[10px] text-amber-400 hover:text-amber-300 underline font-bold transition cursor-pointer shrink-0 ml-2"
+              title="Gunakan database asli NMSA tempat akun admin@nmsa.com terdaftar"
+            >
+              Kunci DB Asli NMSA ➔
+            </button>
+          ) : (
+            <span className="text-[10px] text-stone-400 font-mono italic shrink-0 ml-2">
+              Akun Aktif
+            </span>
+          )}
         </div>
 
         {/* Tab Controls */}
@@ -451,7 +554,66 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                 <span className="flex-1">{statusMsg.text}</span>
               </div>
 
-              {statusMsg.type === 'error' && mode === 'login' && (
+              {/* Special resolution panel for operation-not-allowed */}
+              {statusMsg.type === 'error' && isOperationNotAllowed && (
+                <div className="mt-3 p-3 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2.5 text-stone-850">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-[11px] leading-relaxed">
+                      <strong className="text-amber-900 block font-bold">Mengapa muncul error ini?</strong>
+                      Metode <strong>Email/Password</strong> belum diaktifkan di konsol Firebase untuk project <code className="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono font-bold text-amber-900">{activeProjectId}</code>.
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] font-bold text-stone-800 pt-1 border-t border-amber-200">
+                    Pilih solusi untuk segera melanjutkan:
+                  </div>
+
+                  <div className="space-y-2">
+                    {/* Solusi 1: Masuk dengan Google */}
+                    <button
+                      type="button"
+                      onClick={handleGoogleLogin}
+                      disabled={isLoading}
+                      className="w-full py-2.5 px-3 bg-white hover:bg-stone-50 border border-stone-300 rounded-lg text-xs font-bold text-stone-850 flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                      </svg>
+                      <span>1. Masuk dengan Akun Google (Langsung Aktif)</span>
+                    </button>
+
+                    {/* Solusi 2: Switch to NMSA Production DB */}
+                    {activeProjectId !== 'pencatatan-voucher-perusahaan' && (
+                      <button
+                        type="button"
+                        onClick={handleSwitchToNmsaProd}
+                        disabled={isLoading}
+                        className="w-full py-2.5 px-3 bg-stone-900 hover:bg-stone-850 text-[#D4AF37] border border-stone-800 rounded-lg text-xs font-mono font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                      >
+                        <Database size={13} />
+                        <span>2. Beralih ke Database Asli (pencatatan-voucher-perusahaan)</span>
+                      </button>
+                    )}
+
+                    {/* Solusi 3: Direct link to enable Email/Password in Console */}
+                    <a
+                      href={`https://console.firebase.google.com/project/${activeProjectId}/authentication/providers`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-2 px-3 bg-amber-100 hover:bg-amber-200/80 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition text-center"
+                    >
+                      <ExternalLink size={12} />
+                      <span>3. Buka Firebase Console untuk Aktifkan Email/Sandi ↗</span>
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {statusMsg.type === 'error' && mode === 'login' && !isOperationNotAllowed && (
                 <div className="pt-2 flex flex-wrap items-center gap-2 border-t border-rose-200/70">
                   <button
                     type="button"
